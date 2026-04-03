@@ -37,12 +37,17 @@ The application authenticates to GitHub using a **GitHub App**. You need to crea
    |-------|-------|
    | **GitHub App name** | `DevOps-GitHub-Sync` (or any name) |
    | **Homepage URL** | Your service URL (or any URL) |
+   | **Callback URL / Setup URL** | `https://<your-service-hostname>/github/installed` |
    | **Webhook URL** | `https://<your-service-hostname>/api/github/webhook` |
    | **Webhook secret** | A strong random string – note it down as `WebhookSecret` |
    | **Repository permissions → Contents** | Read & write |
    | **Repository permissions → Pull requests** | Read & write |
    | **Subscribe to events → Installation** | ✅ |
    | **Where can this GitHub App be installed?** | Any account (or only this account) |
+
+   > **Setup URL vs Webhook URL:** The *Setup URL* (`/github/installed`) is where GitHub redirects
+   > the browser after a user completes the installation wizard. The *Webhook URL* (`/api/github/webhook`)
+   > is a separate background POST that GitHub sends at the same time. Both must be configured.
 
 3. Click **Create GitHub App**.
 4. Note down the **App ID** shown on the app's settings page.
@@ -60,17 +65,28 @@ awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' private-key.pem
 
 ### 3 – Install the app on the target repository (or organisation)
 
-Navigate to **GitHub App settings → Install App** and install it on the account / repositories that should receive synced pull requests. After installation, the app sends an `installation` webhook to your service, which stores the installation and generates the `installationApiKey`.
+Navigate to **GitHub App settings → Install App** and install it on the account / repositories that should receive synced pull requests.
 
-### 4 – Retrieve the `installationApiKey`
+After you click **Install**, two things happen simultaneously:
 
-Once the webhook has been received and processed, query the database:
+1. GitHub sends an `installation` webhook POST to `/api/github/webhook` – this records the installation and generates the `installationApiKey` in the database.
+2. GitHub **redirects your browser** to the **Setup URL** (`/github/installed`) where the API key is displayed immediately.
 
-```sql
-SELECT InstallationId, AccountLogin, ApiKey FROM GitHubInstallations;
-```
+> **Note:** There is an inherent race between the webhook POST and the browser redirect. If the
+> page loads before the webhook has been processed it will show a "processing" spinner and
+> auto-refresh every few seconds. This typically resolves within a second or two.
 
-Store the `ApiKey` value as a secret in your Azure DevOps pipeline variable group or key vault. This key must be included in every `POST /api/sync/trigger` request.
+### 4 – Copy the `installationApiKey` from the Setup page
+
+The Setup URL page (`/github/installed`) displays the generated API key in a copyable text box once the installation has been recorded. Copy the key and store it as a **secret variable** in your Azure DevOps pipeline variable group or key vault (e.g. name it `DevOpsGitHubSyncApiKey`).
+
+This key must be included in every `POST /api/sync/trigger` request as `installationApiKey`.
+
+> **Fallback:** If you need to retrieve the key at any time after the initial installation, query the database directly:
+>
+> ```sql
+> SELECT InstallationId, AccountLogin, ApiKey FROM GitHubInstallations;
+> ```
 
 ---
 
@@ -125,13 +141,18 @@ The Web application will be available at **`https://localhost:7014`** (or `http:
 
 ### 5 – Expose the webhook endpoint (optional)
 
-To receive real GitHub webhook events during local development, expose the local port using a tunnelling tool such as [ngrok](https://ngrok.com/) or [dev tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/overview):
+To receive real GitHub webhook events and test the post-installation redirect during local development, expose the local port using a tunnelling tool such as [ngrok](https://ngrok.com/) or [dev tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/overview):
 
 ```bash
 ngrok http 5013
 ```
 
-Update the **Webhook URL** in your GitHub App settings to the generated HTTPS URL (e.g. `https://xxxx.ngrok.io/api/github/webhook`).
+Update **both URL fields** in your GitHub App settings to the generated HTTPS URL:
+
+| Field | Value |
+|-------|-------|
+| **Setup URL** | `https://xxxx.ngrok.io/github/installed` |
+| **Webhook URL** | `https://xxxx.ngrok.io/api/github/webhook` |
 
 ### 6 – Run without Aspire (advanced)
 
@@ -254,23 +275,25 @@ The workflow will:
 2. Log in to Azure via OIDC using the environment variables.
 3. Deploy the published artifact to the configured Azure Web App.
 
-### Webhook URL
+### Service URLs
 
-After deployment, update the **Webhook URL** in your GitHub App settings to:
+After deployment, configure **both URL fields** in your GitHub App settings:
 
-```
-https://<your-web-app-hostname>/api/github/webhook
-```
+| Field | Value |
+|-------|-------|
+| **Setup URL** | `https://<your-web-app-hostname>/github/installed` |
+| **Webhook URL** | `https://<your-web-app-hostname>/api/github/webhook` |
 
 ### Production checklist
 
 - [ ] GitHub App created with correct permissions and events
-- [ ] Webhook URL set to the production service URL
+- [ ] Setup URL set to `https://<hostname>/github/installed`
+- [ ] Webhook URL set to `https://<hostname>/api/github/webhook`
 - [ ] Private key and webhook secret stored in Key Vault
 - [ ] App Service Application Settings configured (incl. Key Vault references)
 - [ ] Azure SQL database provisioned; App Service identity has required DB permissions
 - [ ] OIDC federated credential configured for the GitHub Environment
 - [ ] GitHub Environment variables set (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_WEBAPP_NAME`)
 - [ ] First deployment triggered and succeeded
-- [ ] GitHub App installed on target repositories; webhook received and processed
-- [ ] `installationApiKey` retrieved from database and stored as a secret in Azure DevOps pipeline
+- [ ] GitHub App installed on target repositories; Setup URL page (`/github/installed`) confirmed working
+- [ ] `installationApiKey` copied from Setup URL page and stored as a secret in Azure DevOps pipeline

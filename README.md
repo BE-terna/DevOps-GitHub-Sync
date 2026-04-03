@@ -39,6 +39,14 @@ GitHub pull request ✓
 
 ## API endpoints
 
+### `GET /github/installed`
+
+Post-installation landing page. GitHub redirects the installer's browser here after they complete the GitHub App installation wizard, passing `?installation_id=<id>&setup_action=install` as query parameters.
+
+The page looks up the installation record and displays the `installationApiKey` in a copyable text box so the operator can immediately store it in Azure DevOps. If the installation webhook has not yet been processed (rare race condition) the page shows a spinner and auto-refreshes every few seconds.
+
+> This endpoint must be configured as the **Setup URL** in your GitHub App settings.
+
 ### `POST /api/github/webhook`
 
 Receives GitHub App webhook events. Handles `installation` events to record (or remove) the GitHub App installation in the database and generate the `installationApiKey` that Azure DevOps pipelines will use.

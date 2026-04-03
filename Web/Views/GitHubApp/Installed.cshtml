@@ -1,0 +1,140 @@
+@model InstallationViewModel
+@{
+    ViewData["Title"] = Model.Found
+        ? "App Installed Successfully"
+        : "Installation Processing…";
+}
+
+@if (!Model.Found)
+{
+    // Auto-refresh every 4 seconds while waiting for the webhook to be processed.
+    <meta http-equiv="refresh" content="4" />
+}
+
+@if (Model.Found)
+{
+    <div class="alert alert-success d-flex align-items-center mt-4" role="alert">
+        <span class="me-2" style="font-size:1.5rem;">&#10003;</span>
+        <div>
+            <strong>GitHub App @(Model.SetupAction == "update" ? "updated" : "installed") successfully!</strong>
+            The app is now connected to <strong>@Model.AccountLogin</strong>
+            (@Model.AccountType)
+            with access to
+            <strong>@(Model.RepositorySelection == "all" ? "all repositories" : "selected repositories")</strong>.
+        </div>
+    </div>
+
+    <div class="card mt-4 shadow-sm">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">&#128273; Your Installation API Key</h5>
+        </div>
+        <div class="card-body">
+            <p class="mb-2">
+                Copy the key below and store it as a <strong>secret variable</strong> in your Azure DevOps
+                pipeline or key vault. You must supply this key in every
+                <code>POST /api/sync/trigger</code> request as <code>installationApiKey</code>.
+            </p>
+            <div class="input-group mb-3">
+                <input id="apiKeyInput" type="text" class="form-control font-monospace"
+                       value="@Model.ApiKey" readonly aria-label="Installation API key" />
+                <button class="btn btn-outline-secondary" type="button"
+                        onclick="copyApiKey()" title="Copy to clipboard">
+                    &#128203; Copy
+                </button>
+            </div>
+            <div id="copyConfirm" class="text-success small" style="display:none;">
+                &#10003; Copied to clipboard!
+            </div>
+            <div class="alert alert-warning mt-3 mb-0">
+                <strong>Keep this key secret.</strong>
+                It authorises Azure DevOps pipelines to trigger syncs to repositories covered by this
+                installation. Treat it like a password – store it in a secret vault, not in plain text.
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-4 shadow-sm">
+        <div class="card-header">
+            <h5 class="mb-0">Installation details</h5>
+        </div>
+        <div class="card-body">
+            <table class="table table-sm mb-0">
+                <tbody>
+                    <tr>
+                        <th scope="row" style="width:200px;">GitHub Installation ID</th>
+                        <td><code>@Model.InstallationId</code></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Account</th>
+                        <td><code>@Model.AccountLogin</code> (@Model.AccountType)</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Repository access</th>
+                        <td>@(Model.RepositorySelection == "all" ? "All repositories" : "Selected repositories")</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card mt-4 shadow-sm">
+        <div class="card-header">
+            <h5 class="mb-0">Next steps</h5>
+        </div>
+        <div class="card-body">
+            <ol class="mb-0">
+                <li class="mb-2">
+                    <strong>Store the API key as a secret</strong> in your Azure DevOps pipeline
+                    variable group or key vault (e.g. name it <code>DevOpsGitHubSyncApiKey</code>).
+                </li>
+                <li class="mb-2">
+                    <strong>Add <code>Sync-DevOps-GitHub.yml</code></strong> to the
+                    <code>.github/workflows/</code> folder of every GitHub repository you want to
+                    sync to. The workflow file is included in this repository.
+                </li>
+                <li class="mb-2">
+                    <strong>Configure your Azure DevOps pipeline</strong> to call
+                    <code>POST /api/sync/trigger</code> when a pull request is created or updated,
+                    passing the API key and the required PR metadata. See the
+                    <a asp-controller="Home" asp-action="Index">API documentation</a> for the
+                    full request schema.
+                </li>
+            </ol>
+        </div>
+    </div>
+}
+else
+{
+    <div class="text-center mt-5">
+        <div class="spinner-border text-primary mb-3" role="status" style="width:3rem;height:3rem;">
+            <span class="visually-hidden">Loading…</span>
+        </div>
+        <h2>Processing your installation…</h2>
+        <p class="text-muted">
+            Installation <code>@Model.InstallationId</code> is being recorded.
+            This page will refresh automatically in a few seconds.
+        </p>
+        <p class="text-muted small">
+            If this message persists for more than 30 seconds, check that the
+            <strong>Webhook URL</strong> in your GitHub App settings points to
+            <code>/api/github/webhook</code> on this service and that the webhook
+            secret is correctly configured.
+        </p>
+    </div>
+}
+
+@section Scripts {
+    <script>
+        function copyApiKey() {
+            var input = document.getElementById('apiKeyInput');
+            if (!input) return;
+            navigator.clipboard.writeText(input.value).then(function () {
+                var confirm = document.getElementById('copyConfirm');
+                if (confirm) {
+                    confirm.style.display = 'block';
+                    setTimeout(function () { confirm.style.display = 'none'; }, 3000);
+                }
+            });
+        }
+    </script>
+}
