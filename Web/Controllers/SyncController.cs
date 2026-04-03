@@ -75,7 +75,8 @@ public class SyncController : ControllerBase
             if (installation is null)
             {
                 _logger.LogWarning(
-                    "No GitHub App installation found with access to {Repo}.", request.TargetGitHubRepo);
+                    "No GitHub App installation found with access to {Repo}.",
+                    Sanitize(request.TargetGitHubRepo));
 
                 auditRecord.Status = "Failed";
                 auditRecord.ErrorMessage =
@@ -96,7 +97,10 @@ public class SyncController : ControllerBase
             if (!workflowExists)
             {
                 var msg = $"Workflow '{SyncWorkflowFileName}' not found in {request.TargetGitHubRepo}.";
-                _logger.LogWarning("{Message}", msg);
+                _logger.LogWarning(
+                    "Workflow '{WorkflowFile}' not found in {Repo}.",
+                    SyncWorkflowFileName,
+                    Sanitize(request.TargetGitHubRepo));
 
                 auditRecord.Status = "Failed";
                 auditRecord.ErrorMessage = msg;
@@ -125,7 +129,9 @@ public class SyncController : ControllerBase
 
             _logger.LogInformation(
                 "Dispatched '{Event}' to {Repo} for PR {PrId}.",
-                SyncEventType, request.TargetGitHubRepo, request.PullRequestId);
+                SyncEventType,
+                Sanitize(request.TargetGitHubRepo),
+                Sanitize(request.PullRequestId));
 
             auditRecord.Status = "Dispatched";
             auditRecord.UpdatedAt = DateTimeOffset.UtcNow;
@@ -135,7 +141,10 @@ public class SyncController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing sync trigger for PR {PrId}.", request.PullRequestId);
+            _logger.LogError(
+                ex,
+                "Error processing sync trigger for PR {PrId}.",
+                Sanitize(request.PullRequestId));
 
             auditRecord.Status = "Failed";
             auditRecord.ErrorMessage = ex.Message;
@@ -145,4 +154,9 @@ public class SyncController : ControllerBase
             return StatusCode(500, "An error occurred while processing the sync request.");
         }
     }
+
+    /// <summary>Removes newline characters from a user-supplied value before it is written to a log.</summary>
+    private static string Sanitize(string value) =>
+        value.Replace("\r", string.Empty, StringComparison.Ordinal)
+             .Replace("\n", string.Empty, StringComparison.Ordinal);
 }

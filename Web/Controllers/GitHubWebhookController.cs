@@ -50,7 +50,7 @@ public class GitHubWebhookController : ControllerBase
         }
 
         var eventType = Request.Headers["X-GitHub-Event"].ToString();
-        _logger.LogInformation("Received GitHub webhook event: {Event}", eventType);
+        _logger.LogInformation("Received GitHub webhook event: {Event}", Sanitize(eventType));
 
         if (eventType != "installation")
             return Ok();
@@ -72,7 +72,7 @@ public class GitHubWebhookController : ControllerBase
                 break;
 
             default:
-                _logger.LogInformation("Unhandled installation action: {Action}", payload.Action);
+                _logger.LogInformation("Unhandled installation action: {Action}", Sanitize(payload.Action));
                 break;
         }
 
@@ -130,7 +130,7 @@ public class GitHubWebhookController : ControllerBase
         _logger.LogInformation(
             "Installation {Id} ({Login}) upserted.",
             payload.Installation.Id,
-            payload.Installation.Account.Login);
+            Sanitize(payload.Installation.Account.Login));
     }
 
     private async Task RemoveInstallationAsync(long installationId, CancellationToken ct)
@@ -145,4 +145,9 @@ public class GitHubWebhookController : ControllerBase
             _logger.LogInformation("Installation {Id} removed.", installationId);
         }
     }
+
+    /// <summary>Removes newline characters from a user-supplied value before it is written to a log.</summary>
+    private static string Sanitize(string value) =>
+        value.Replace("\r", string.Empty, StringComparison.Ordinal)
+             .Replace("\n", string.Empty, StringComparison.Ordinal);
 }
