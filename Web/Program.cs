@@ -11,7 +11,8 @@ builder.AddServiceDefaults();
 builder.Services.Configure<GitHubAppOptions>(
     builder.Configuration.GetSection(GitHubAppOptions.SectionName));
 
-// ── Database (EF Core 10 / Azure SQL) ────────────────────────────────────────
+// ── Database (EF Core 10.0.0 / Azure SQL) ────────────────────────────────────
+// EF Core 10 ships alongside .NET 10 (November 2025).
 var connectionString = builder.Configuration.GetConnectionString("DevOpsGitHubSync")
     ?? throw new InvalidOperationException(
         "Connection string 'DevOpsGitHubSync' not found. " +

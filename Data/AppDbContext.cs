@@ -4,8 +4,9 @@ using Microsoft.EntityFrameworkCore;
 namespace DevOps.GitHub.Sync.Data;
 
 /// <summary>
-/// EF Core 10 database context for the DevOps GitHub Sync application.
-/// Configured for Azure SQL Server using code-first with data annotations.
+/// EF Core 10.0.0 database context for the DevOps GitHub Sync application.
+/// EF Core 10 ships alongside .NET 10. Configured for Azure SQL Server using
+/// code-first with data annotations.
 /// </summary>
 public class AppDbContext : DbContext
 {
