@@ -1,0 +1,75 @@
+name: Sync-DevOps-GitHub
+
+on:
+  repository_dispatch:
+    types: [Sync-DevOps-GitHub]
+
+jobs:
+  sync:
+    name: Sync PR branch from Azure DevOps
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    env:
+      ADO_TOKEN:       ${{ github.event.client_payload.ado_token }}
+      SOURCE_REPO_URL: ${{ github.event.client_payload.source_repo_url }}
+      PR_BRANCH:       ${{ github.event.client_payload.branch_name }}
+      PR_TITLE:        ${{ github.event.client_payload.pr_title }}
+      PR_BODY:         ${{ github.event.client_payload.pr_body }}
+      TARGET_BRANCH:   ${{ github.event.client_payload.target_branch }}
+
+    steps:
+      - name: Checkout target GitHub repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync PR branch and create GitHub PR if needed
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # ── Git identity ───────────────────────────────────────────────────────
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name  "github-actions[bot]"
+
+          # ── Add Azure DevOps as a remote ───────────────────────────────────────
+          # ADO uses Basic auth with a Base64-encoded PAT.
+          $adoTokenB64 = [Convert]::ToBase64String(
+              [Text.Encoding]::ASCII.GetBytes(":$env:ADO_TOKEN"))
+
+          git remote add devops $env:SOURCE_REPO_URL
+          git config --local http.$env:SOURCE_REPO_URL.extraHeader `
+              "Authorization: Basic $adoTokenB64"
+
+          # ── Fetch the PR branch from Azure DevOps ──────────────────────────────
+          Write-Host "Fetching branch '$env:PR_BRANCH' from Azure DevOps..."
+          git fetch devops $env:PR_BRANCH
+
+          # ── Push branch to GitHub ──────────────────────────────────────────────
+          Write-Host "Pushing '$env:PR_BRANCH' to GitHub..."
+          git checkout -b $env:PR_BRANCH FETCH_HEAD
+          git push origin $env:PR_BRANCH --force
+
+          # ── Create GitHub PR if one does not already exist ─────────────────────
+          $existingPr = gh pr list `
+              --head   $env:PR_BRANCH `
+              --base   $env:TARGET_BRANCH `
+              --state  open `
+              --json   number `
+              --jq     ".[0].number" 2>$null
+
+          if ([string]::IsNullOrWhiteSpace($existingPr)) {
+              Write-Host "No open PR found – creating one..."
+              gh pr create `
+                  --head  $env:PR_BRANCH `
+                  --base  $env:TARGET_BRANCH `
+                  --title $env:PR_TITLE `
+                  --body  $env:PR_BODY
+          } else {
+              Write-Host "PR #$existingPr already exists – skipping creation."
+          }

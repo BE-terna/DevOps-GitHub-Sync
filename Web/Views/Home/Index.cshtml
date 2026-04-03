@@ -1,8 +1,90 @@
 ﻿@{
-    ViewData["Title"] = "Home Page";
+    ViewData["Title"] = "DevOps GitHub Sync";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="px-4 py-5 my-5 text-center">
+    <h1 class="display-5 fw-bold">DevOps&nbsp;&harr;&nbsp;GitHub Sync</h1>
+    <div class="col-lg-8 mx-auto">
+        <p class="lead mb-4">
+            A GitHub App that mirrors Azure DevOps pull-request branches to GitHub and keeps
+            them in sync – automatically creating GitHub PRs along the way.
+        </p>
+        <a href="https://github.com/apps/devops-github-sync"
+           class="btn btn-primary btn-lg px-4 me-2" target="_blank" rel="noopener noreferrer">
+            Install GitHub App
+        </a>
+    </div>
+</div>
+
+<div class="container py-4">
+    <div class="row g-4 row-cols-1 row-cols-md-3">
+
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">&#128279; GitHub App Installation</h5>
+                    <p class="card-text">
+                        Install the <strong>devops-github-sync</strong> GitHub App on any
+                        organisation or repository. The app requests <em>contents</em> and
+                        <em>actions</em> permissions so it can read code and trigger workflows.
+                        Installation tokens are stored securely in Azure SQL and refreshed
+                        automatically before they expire.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">&#9881; Azure DevOps Pipeline Trigger</h5>
+                    <p class="card-text">
+                        Add a pipeline step that <code>POST</code>s to
+                        <code>/api/sync/trigger</code> with the source repo URL,
+                        <code>System.AccessToken</code>, pull-request ID, commit ID and
+                        the target GitHub repository. The service verifies app permissions,
+                        then fires a <code>repository_dispatch</code> event to start the
+                        sync workflow on GitHub.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">&#128260; Sync-DevOps-GitHub Workflow</h5>
+                    <p class="card-text">
+                        Place the bundled <code>Sync-DevOps-GitHub.yml</code> workflow in
+                        your GitHub repository's <code>.github/workflows/</code> folder.
+                        When triggered it adds Azure DevOps as a git remote, fetches the PR
+                        branch, pushes it to GitHub and creates a pull-request if one does
+                        not already exist.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div class="container py-4">
+    <h2 class="mb-3">API endpoint</h2>
+    <p>
+        Your Azure DevOps pipeline (or any CI system) can trigger a sync by sending:
+    </p>
+    <pre class="bg-light p-3 rounded"><code>POST /api/sync/trigger
+Content-Type: application/json
+
+{
+  "sourceRepoUrl":    "https://dev.azure.com/org/project/_git/repo",
+  "systemAccessToken": "$(System.AccessToken)",
+  "pullRequestId":    "42",
+  "commitId":         "abc123",
+  "targetGitHubRepo": "my-org/my-repo",
+  "branchName":       "feature/my-feature",
+  "prTitle":          "My feature",
+  "prBody":           "Synced from Azure DevOps PR #42",
+  "targetBranch":     "main"
+}</code></pre>
 </div>
