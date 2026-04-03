@@ -1,0 +1,90 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: >
+          Azure environment name to deploy to (must match a GitHub environment
+          with AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID and
+          AZURE_WEBAPP_NAME variables configured). Leave blank to skip deploy.
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Build ──────────────────────────────────────────────────────────────────
+  build:
+    name: Build & publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Restore
+        run: dotnet restore Web/Web.csproj -p:RestoreLockedMode=false
+
+      - name: Build
+        run: dotnet build Web/Web.csproj --no-restore -c Release
+
+      - name: Publish
+        run: >
+          dotnet publish Web/Web.csproj
+          --no-build
+          -c Release
+          -o ${{ runner.temp }}/publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-app
+          path: ${{ runner.temp }}/publish
+          retention-days: 7
+
+  # ── Deploy (only when an environment name is supplied) ─────────────────────
+  deploy:
+    name: Deploy to Azure (${{ inputs.environment }})
+    needs: build
+    # Run on manual dispatch when an environment name is provided
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      inputs.environment != ''
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write   # required for OIDC federation
+      contents: read
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-app
+          path: ${{ runner.temp }}/publish
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: ${{ runner.temp }}/publish

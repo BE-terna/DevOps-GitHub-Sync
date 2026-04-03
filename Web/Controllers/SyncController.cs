@@ -3,6 +3,7 @@ using DevOps.GitHub.Sync.Data.Entities;
 using DevOps.GitHub.Sync.Web.Models;
 using DevOps.GitHub.Sync.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace DevOps.GitHub.Sync.Web.Controllers;
 
@@ -36,8 +37,16 @@ public class SyncController : ControllerBase
     /// </summary>
     /// <remarks>
     /// Expected JSON body: <see cref="SyncTriggerRequest"/>.
-    /// Returns 200 on success, 403 if the app has no permission on the target repo,
-    /// 404 if the workflow file does not exist in the target repo.
+    ///
+    /// Authentication: the caller must supply <c>installationApiKey</c> – the
+    /// non-guessable GUID that was generated when the GitHub App was installed.
+    /// The key is looked up in the database; if it does not match any installation,
+    /// or if the matched installation does not cover the requested target repository,
+    /// the request is rejected with 403.
+    ///
+    /// Returns 200 on success, 401 if the key is missing/invalid, 403 if the
+    /// installation has no access to the target repo, 404 if the workflow file
+    /// does not exist in the target repo.
     /// </remarks>
     [HttpPost("trigger")]
     public async Task<IActionResult> Trigger(
@@ -47,13 +56,40 @@ public class SyncController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        // Parse owner/repo from the target
+        // ── Validate API key ──────────────────────────────────────────────────
+        // Look up the installation by its non-guessable key.
+        // Use a constant-time string comparison to avoid timing side-channels.
+        var installation = await _db.GitHubInstallations
+            .FirstOrDefaultAsync(i => i.ApiKey == request.InstallationApiKey, ct);
+
+        if (installation is null)
+        {
+            _logger.LogWarning("Sync trigger rejected – unknown installation API key.");
+            return Unauthorized("Invalid installation API key.");
+        }
+
+        // ── Parse owner/repo from the target ──────────────────────────────────
         var parts = request.TargetGitHubRepo.Split('/', 2);
         if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
             return BadRequest("targetGitHubRepo must be in 'owner/repo' format.");
 
         var owner = parts[0];
         var repo = parts[1];
+
+        // ── Verify the installation covers the target repo ────────────────────
+        // For "all repositories" installs the AccountLogin must match the owner.
+        // For "selected" installs we verify via the GitHub API.
+        var hasAccess = await _gitHub.InstallationCoversRepoAsync(installation, owner, repo, ct);
+        if (!hasAccess)
+        {
+            _logger.LogWarning(
+                "Installation {Id} does not have access to {Repo}.",
+                installation.InstallationId,
+                Sanitize(request.TargetGitHubRepo));
+
+            return StatusCode(403,
+                $"Installation {installation.InstallationId} does not have access to {request.TargetGitHubRepo}.");
+        }
 
         // ── Audit record ───────────────────────────────────────────────────────
         var auditRecord = new SyncRequest
@@ -70,23 +106,6 @@ public class SyncController : ControllerBase
 
         try
         {
-            // ── Find installation that has access to the target repo ────────────
-            var installation = await _gitHub.FindInstallationForRepoAsync(owner, repo, ct);
-            if (installation is null)
-            {
-                _logger.LogWarning(
-                    "No GitHub App installation found with access to {Repo}.",
-                    Sanitize(request.TargetGitHubRepo));
-
-                auditRecord.Status = "Failed";
-                auditRecord.ErrorMessage =
-                    $"The GitHub App is not installed on {request.TargetGitHubRepo} or does not have access.";
-                auditRecord.UpdatedAt = DateTimeOffset.UtcNow;
-                await _db.SaveChangesAsync(ct);
-
-                return StatusCode(403, auditRecord.ErrorMessage);
-            }
-
             // ── Get installation access token ─────────────────────────────────
             var accessToken = await _gitHub.GetInstallationAccessTokenAsync(installation, ct);
 

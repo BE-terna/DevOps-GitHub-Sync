@@ -8,6 +8,16 @@ namespace DevOps.GitHub.Sync.Web.Models;
 /// </summary>
 public sealed class SyncTriggerRequest
 {
+    /// <summary>
+    /// Non-guessable API key tied to the GitHub App installation.
+    /// Obtain this value from the installation record (e.g. via an admin page or
+    /// the webhook upsert log). It proves the caller is authorised to dispatch to
+    /// the target repository without requiring the app's private key.
+    /// </summary>
+    [Required]
+    [JsonPropertyName("installationApiKey")]
+    public string InstallationApiKey { get; set; } = string.Empty;
+
     /// <summary>Azure DevOps source repository URL (HTTPS clone URL).</summary>
     [Required]
     [JsonPropertyName("sourceRepoUrl")]

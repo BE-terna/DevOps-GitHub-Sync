@@ -115,6 +115,8 @@ public class GitHubWebhookController : ControllerBase
             existing = new GitHubInstallation
             {
                 InstallationId = payload.Installation.Id,
+                // Generate a non-guessable API key once and keep it stable across re-installs.
+                ApiKey = Guid.NewGuid().ToString("N"),
             };
             _db.GitHubInstallations.Add(existing);
         }

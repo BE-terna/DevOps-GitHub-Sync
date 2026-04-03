@@ -15,6 +15,15 @@ public class GitHubInstallation
     [Key]
     public int Id { get; set; }
 
+    /// <summary>
+    /// Non-guessable API key (GUID) generated when the installation is first recorded.
+    /// Callers of <c>POST /api/sync/trigger</c> must supply this value so that a
+    /// leaked Azure DevOps access-token cannot be used to push to arbitrary repos.
+    /// </summary>
+    [Required]
+    [MaxLength(50)]
+    public string ApiKey { get; set; } = string.Empty;
+
     /// <summary>GitHub-assigned installation identifier.</summary>
     [Required]
     public long InstallationId { get; set; }

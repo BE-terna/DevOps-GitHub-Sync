@@ -29,6 +29,11 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<GitHubInstallation>()
             .HasIndex(i => i.AccountLogin);
 
+        // Index for API key look-up
+        modelBuilder.Entity<GitHubInstallation>()
+            .HasIndex(i => i.ApiKey)
+            .IsUnique();
+
         // Index for quick look-up by status
         modelBuilder.Entity<SyncRequest>()
             .HasIndex(r => r.Status);

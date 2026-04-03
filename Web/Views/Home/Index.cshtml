@@ -77,14 +77,23 @@
 Content-Type: application/json
 
 {
-  "sourceRepoUrl":    "https://dev.azure.com/org/project/_git/repo",
-  "systemAccessToken": "$(System.AccessToken)",
-  "pullRequestId":    "42",
-  "commitId":         "abc123",
-  "targetGitHubRepo": "my-org/my-repo",
-  "branchName":       "feature/my-feature",
-  "prTitle":          "My feature",
-  "prBody":           "Synced from Azure DevOps PR #42",
-  "targetBranch":     "main"
+  "installationApiKey": "&lt;non-guessable GUID generated on GitHub App install&gt;",
+  "sourceRepoUrl":      "https://dev.azure.com/org/project/_git/repo",
+  "systemAccessToken":  "$(System.AccessToken)",
+  "pullRequestId":      "42",
+  "commitId":           "abc123",
+  "targetGitHubRepo":   "my-org/my-repo",
+  "branchName":         "feature/my-feature",
+  "prTitle":            "My feature",
+  "prBody":             "Synced from Azure DevOps PR #42",
+  "targetBranch":       "main"
 }</code></pre>
+    <div class="alert alert-info mt-3">
+        <strong>How to obtain the API key:</strong>
+        The <code>installationApiKey</code> is generated automatically when the GitHub App is
+        installed and is stored in the <code>GitHubInstallations</code> table. Retrieve it once
+        (e.g. from the database or an admin page) and store it as a secret variable in your
+        Azure DevOps pipeline or key vault – it does not change unless the installation is deleted
+        and re-created.
+    </div>
 </div>

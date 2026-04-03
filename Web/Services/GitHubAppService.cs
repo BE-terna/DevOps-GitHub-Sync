@@ -114,8 +114,38 @@ public sealed class GitHubAppService
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Finds the installation record that has access to the given GitHub repository.
-    /// Returns null if the app has not been installed on that owner / repository.
+    /// Returns true when the given installation has access to the target repository.
+    /// For "all repositories" installs the check is purely local (owner login match).
+    /// For "selected" installs the GitHub API is called to confirm access.
+    /// </summary>
+    public async Task<bool> InstallationCoversRepoAsync(
+        GitHubInstallation installation,
+        string owner,
+        string repo,
+        CancellationToken ct = default)
+    {
+        if (installation.RepositorySelection == "all"
+            && string.Equals(installation.AccountLogin, owner, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // "selected" or cross-owner: verify via GitHub API
+        var token = await GetInstallationAccessTokenAsync(installation, ct);
+        var client = _httpClientFactory.CreateClient("GitHub");
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var repoResponse = await client.GetAsync(
+            $"https://api.github.com/repos/{owner}/{repo}", ct);
+
+        return repoResponse.IsSuccessStatusCode;
+    }
+
+    /// <summary>
+    /// Finds the installation record that has access to the given GitHub repository
+    /// by scanning all stored installations. Prefer <see cref="InstallationCoversRepoAsync"/>
+    /// when the installation is already known (i.e. identified by API key).
     /// </summary>
     public async Task<GitHubInstallation?> FindInstallationForRepoAsync(
         string owner,
@@ -136,15 +166,7 @@ public sealed class GitHubAppService
             if (installation.RepositorySelection == "all")
                 continue; // already checked via AccountLogin above
 
-            var token = await GetInstallationAccessTokenAsync(installation, ct);
-            var client = _httpClientFactory.CreateClient("GitHub");
-            client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-            var repoResponse = await client.GetAsync(
-                $"https://api.github.com/repos/{owner}/{repo}", ct);
-
-            if (repoResponse.IsSuccessStatusCode)
+            if (await InstallationCoversRepoAsync(installation, owner, repo, ct))
                 return installation;
         }
 
