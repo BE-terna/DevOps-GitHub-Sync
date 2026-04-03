@@ -1,0 +1,18 @@
+<Project>
+
+    <PropertyGroup>
+        <AssemblyName>DevOps.GitHub.Sync.$(MSBuildProjectName)</AssemblyName>
+        <RootNamespace>DevOps.GitHub.Sync.$(MSBuildProjectName.Replace(" ", "_"))</RootNamespace>
+        <Nullable>enable</Nullable>
+        <UserSecretsId>019d5507-3266-7656-9793-c9ef43c3c784</UserSecretsId>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="DotNet.ReproducibleBuilds" Version="2.*" PrivateAssets="All"/>
+        <PackageReference Include="DotNet.ReproducibleBuilds.Isolated" Version="2.*" PrivateAssets="All"/>
+    </ItemGroup>
+
+</Project>
