@@ -115,6 +115,9 @@ User secrets are scoped to the solution via the shared `UserSecretsId` in `Direc
 # GitHub App ID (numeric)
 dotnet user-secrets set "GitHubApp:AppId" "123456" --project Web
 
+# GitHub App URL slug (the last segment of https://github.com/apps/<slug>)
+dotnet user-secrets set "GitHubApp:AppSlug" "devops-github-sync" --project Web
+
 # RSA private key (newlines as \n literal)
 dotnet user-secrets set "GitHubApp:PrivateKeyPem" "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----" --project Web
 
@@ -202,6 +205,7 @@ Configure the following settings on the Azure Web App (**Configuration → Appli
 |-------------|-------|-----------|
 | `ASPNETCORE_ENVIRONMENT` | `Production` | No |
 | `GitHubApp:AppId` | Numeric GitHub App ID | No |
+| `GitHubApp:AppSlug` | URL slug of the GitHub App (e.g. `devops-github-sync`) | No |
 | `GitHubApp:PrivateKeyPem` | PEM key with `\n` literal newlines | **Yes** – use Key Vault reference |
 | `GitHubApp:WebhookSecret` | Webhook secret string | **Yes** – use Key Vault reference |
 | `ConnectionStrings:DevOpsGitHubSync` | Azure SQL connection string | **Yes** – use Key Vault reference |

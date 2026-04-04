@@ -35,8 +35,13 @@ public class GitHubAppController : Controller
     public async Task<IActionResult> Installed(
         [FromQuery(Name = "installation_id")] long installationId,
         [FromQuery(Name = "setup_action")] string setupAction = "install",
+        [FromQuery(Name = "code")] string? code = null,
         CancellationToken ct = default)
     {
+        // Note: `code` is an OAuth user-access-token code that GitHub includes when
+        // a redirect_uri is configured on the app. This app does not implement GitHub
+        // OAuth user authentication so the code is intentionally ignored; it is
+        // accepted here purely to prevent a query-string mismatch 400.
         var installation = await _db.GitHubInstallations
             .FirstOrDefaultAsync(i => i.InstallationId == installationId, ct);
 

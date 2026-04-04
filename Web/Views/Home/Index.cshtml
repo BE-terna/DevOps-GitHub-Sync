@@ -9,8 +9,8 @@
             A GitHub App that mirrors Azure DevOps pull-request branches to GitHub and keeps
             them in sync – automatically creating GitHub PRs along the way.
         </p>
-        <a href="https://github.com/apps/devops-github-sync"
-           class="btn btn-primary btn-lg px-4 me-2" target="_blank" rel="noopener noreferrer">
+        <a href="@ViewData["GitHubInstallUrl"]"
+           class="btn btn-primary btn-lg px-4 me-2">
             Install GitHub App
         </a>
     </div>
@@ -91,9 +91,9 @@ Content-Type: application/json
     <div class="alert alert-info mt-3">
         <strong>How to obtain the API key:</strong>
         The <code>installationApiKey</code> is generated automatically when the GitHub App is
-        installed and is stored in the <code>GitHubInstallations</code> table. Retrieve it once
-        (e.g. from the database or an admin page) and store it as a secret variable in your
-        Azure DevOps pipeline or key vault – it does not change unless the installation is deleted
-        and re-created.
+        installed. Click <strong>Install GitHub App</strong> above – after completing the
+        installation on GitHub you will be redirected back here and the key will be displayed
+        immediately. Store it as a secret variable in your Azure DevOps pipeline or key vault –
+        it does not change unless the installation is deleted and re-created.
     </div>
 </div>

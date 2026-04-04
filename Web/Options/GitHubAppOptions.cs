@@ -19,4 +19,12 @@ public sealed class GitHubAppOptions
 
     /// <summary>Webhook secret configured on the GitHub App settings page.</summary>
     public string WebhookSecret { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The URL slug of the GitHub App (the last segment of the app's GitHub URL).
+    /// For example, if the app lives at <c>https://github.com/apps/devops-github-sync</c>
+    /// the slug is <c>devops-github-sync</c>.
+    /// Used to construct the installation link on the home page.
+    /// </summary>
+    public string AppSlug { get; set; } = string.Empty;
 }
