@@ -55,28 +55,26 @@ Receives GitHub App webhook events. Handles `installation` events to record (or 
 
 ### `POST /api/sync/trigger`
 
-Called by an Azure DevOps pipeline to request a sync. Authenticates the caller using the `installationApiKey`, verifies the installation has access to the target repository, then fires a `repository_dispatch` event on the target GitHub repo.
+Called by an Azure DevOps pipeline to request a sync. Authorizes the request by checking whether `sourceRepoUrl` is listed in a repository variable on the target GitHub repo, then fires a `repository_dispatch` event.
 
 **Request body:**
 
 ```json
 {
-  "installationApiKey": "<non-guessable GUID from GitHubInstallations table>",
-  "sourceRepoUrl":      "https://dev.azure.com/org/project/_git/repo",
-  "systemAccessToken":  "$(System.AccessToken)",
-  "pullRequestId":      "42",
-  "commitId":           "abc123def456",
-  "targetGitHubRepo":   "my-org/my-repo",
-  "branchName":         "feature/my-feature",
-  "prTitle":            "My feature (from ADO PR #42)",
-  "prBody":             "Synced from Azure DevOps PR #42",
-  "targetBranch":       "main"
+  "sourceRepoUrl":     "https://dev.azure.com/org/project/_git/repo",
+  "systemAccessToken": "$(System.AccessToken)",
+  "pullRequestId":     "42",
+  "commitId":          "abc123def456",
+  "targetGitHubRepo":  "my-org/my-repo",
+  "branchName":        "feature/my-feature",
+  "prTitle":           "My feature (from ADO PR #42)",
+  "prBody":            "Synced from Azure DevOps PR #42",
+  "targetBranch":      "main"
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `installationApiKey` | ✅ | API key from the `GitHubInstallations` table (see [Setup guide](docs/setup.md)) |
 | `sourceRepoUrl` | ✅ | HTTPS clone URL of the Azure DevOps repository |
 | `systemAccessToken` | ✅ | `$(System.AccessToken)` – ADO pipeline token used by the sync workflow to fetch the branch |
 | `pullRequestId` | ✅ | Azure DevOps pull-request identifier |
@@ -87,14 +85,15 @@ Called by an Azure DevOps pipeline to request a sync. Authenticates the caller u
 | `prBody` | | GitHub PR body / description |
 | `targetBranch` | | Base branch for the GitHub PR (defaults to `main`) |
 
+**Authorization:** The target GitHub repository must have a repository Actions variable named `DEVOPS_GITHUB_SYNC_SOURCES` containing a newline-separated list of allowed Azure DevOps source repository URLs. The request is accepted only when `sourceRepoUrl` matches one of those URLs.
+
 **Response codes:**
 
 | Code | Meaning |
 |------|---------|
 | 200 | Sync dispatched successfully |
 | 400 | Malformed request body |
-| 401 | `installationApiKey` is missing or not found |
-| 403 | The matched installation does not have access to the target repository |
+| 403 | No installation found for the target repo, variable missing, or source URL not in the allow-list |
 | 404 | `Sync-DevOps-GitHub.yml` workflow not found in the target repository |
 | 500 | Unexpected error (GitHub API failure, etc.) |
 
@@ -103,7 +102,7 @@ Called by an Azure DevOps pipeline to request a sync. Authenticates the caller u
 | Concern | Mechanism |
 |---------|-----------|
 | Webhook authenticity | HMAC-SHA256 signature (`X-Hub-Signature-256`) verified with `WebhookSecret`; timing-safe comparison |
-| Sync trigger auth | Per-installation `installationApiKey` (GUID) required in every request; prevents callers with only a leaked ADO token from pushing to arbitrary repos |
+| Sync trigger auth | Source allow-list: the target repository must contain a `DEVOPS_GITHUB_SYNC_SOURCES` Actions variable listing permitted ADO source URLs; requests from unlisted sources are rejected with 403 |
 | GitHub API auth | Short-lived GitHub App installation access tokens (RSA-signed JWT exchanged for token, cached, auto-refreshed) |
 | Deployment auth | OIDC workload identity federation – no stored Azure secrets in GitHub |
 

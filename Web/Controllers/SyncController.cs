@@ -17,6 +17,13 @@ public class SyncController : ControllerBase
     private const string SyncWorkflowFileName = "Sync-DevOps-GitHub.yml";
     private const string SyncEventType = "Sync-DevOps-GitHub";
 
+    /// <summary>
+    /// Name of the GitHub Actions repository variable that holds the allowed
+    /// Azure DevOps source repository URLs (one per line).
+    /// The GitHub App installation must have the <c>Variables: Read</c> permission.
+    /// </summary>
+    private const string AllowedSourcesVariableName = "DEVOPS_GITHUB_SYNC_SOURCES";
+
     private readonly AppDbContext _db;
     private readonly GitHubAppService _gitHub;
     private readonly ILogger<SyncController> _logger;
@@ -38,15 +45,13 @@ public class SyncController : ControllerBase
     /// <remarks>
     /// Expected JSON body: <see cref="SyncTriggerRequest"/>.
     ///
-    /// Authentication: the caller must supply <c>installationApiKey</c> – the
-    /// non-guessable GUID that was generated when the GitHub App was installed.
-    /// The key is looked up in the database; if it does not match any installation,
-    /// or if the matched installation does not cover the requested target repository,
-    /// the request is rejected with 403.
+    /// Authorization: the target GitHub repository must contain a repository
+    /// Actions variable named <c>DEVOPS_GITHUB_SYNC_SOURCES</c> whose value is a
+    /// newline-separated list of allowed Azure DevOps source repository URLs.
+    /// The request is accepted only when <c>sourceRepoUrl</c> appears in that list.
     ///
-    /// Returns 200 on success, 401 if the key is missing/invalid, 403 if the
-    /// installation has no access to the target repo, 404 if the workflow file
-    /// does not exist in the target repo.
+    /// Returns 200 on success, 403 if no installation covers the target repo or the
+    /// source URL is not in the allowed list, 404 if the workflow file does not exist.
     /// </remarks>
     [HttpPost("trigger")]
     public async Task<IActionResult> Trigger(
@@ -56,18 +61,6 @@ public class SyncController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        // ── Validate API key ──────────────────────────────────────────────────
-        // Look up the installation by its non-guessable key.
-        // Use a constant-time string comparison to avoid timing side-channels.
-        var installation = await _db.GitHubInstallations
-            .FirstOrDefaultAsync(i => i.ApiKey == request.InstallationApiKey, ct);
-
-        if (installation is null)
-        {
-            _logger.LogWarning("Sync trigger rejected – unknown installation API key.");
-            return Unauthorized("Invalid installation API key.");
-        }
-
         // ── Parse owner/repo from the target ──────────────────────────────────
         var parts = request.TargetGitHubRepo.Split('/', 2);
         if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
@@ -76,19 +69,53 @@ public class SyncController : ControllerBase
         var owner = parts[0];
         var repo = parts[1];
 
-        // ── Verify the installation covers the target repo ────────────────────
-        // For "all repositories" installs the AccountLogin must match the owner.
-        // For "selected" installs we verify via the GitHub API.
-        var hasAccess = await _gitHub.InstallationCoversRepoAsync(installation, owner, repo, ct);
-        if (!hasAccess)
+        // ── Find the GitHub App installation for the target repo ──────────────
+        var installation = await _gitHub.FindInstallationForRepoAsync(owner, repo, ct);
+        if (installation is null)
         {
             _logger.LogWarning(
-                "Installation {Id} does not have access to {Repo}.",
-                installation.InstallationId,
+                "Sync trigger rejected – no installation found for {Repo}.",
                 Sanitize(request.TargetGitHubRepo));
 
             return StatusCode(403,
-                $"Installation {installation.InstallationId} does not have access to {request.TargetGitHubRepo}.");
+                $"No GitHub App installation found that covers {request.TargetGitHubRepo}.");
+        }
+
+        // ── Obtain an installation access token ───────────────────────────────
+        var accessToken = await _gitHub.GetInstallationAccessTokenAsync(installation, ct);
+
+        // ── Read the allowed-sources variable from the target repo ────────────
+        // The variable value is a newline-separated list of ADO source repo URLs.
+        var variableValue = await _gitHub.GetRepoVariableAsync(
+            owner, repo, AllowedSourcesVariableName, accessToken, ct);
+
+        if (variableValue is null)
+        {
+            _logger.LogWarning(
+                "Sync trigger rejected – variable '{Variable}' not found in {Repo}.",
+                AllowedSourcesVariableName,
+                Sanitize(request.TargetGitHubRepo));
+
+            return StatusCode(403,
+                $"Repository variable '{AllowedSourcesVariableName}' not found in {request.TargetGitHubRepo}. " +
+                "Add the variable with the allowed Azure DevOps source repository URLs (one per line).");
+        }
+
+        var allowedSources = variableValue
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (!allowedSources.Contains(request.SourceRepoUrl))
+        {
+            _logger.LogWarning(
+                "Sync trigger rejected – source repo is not in the allowed list for {Repo}.",
+                Sanitize(request.TargetGitHubRepo));
+
+            return StatusCode(403,
+                $"Source repository is not listed in '{AllowedSourcesVariableName}' " +
+                $"for {request.TargetGitHubRepo}.");
         }
 
         // ── Audit record ───────────────────────────────────────────────────────
@@ -106,9 +133,6 @@ public class SyncController : ControllerBase
 
         try
         {
-            // ── Get installation access token ─────────────────────────────────
-            var accessToken = await _gitHub.GetInstallationAccessTokenAsync(installation, ct);
-
             // ── Verify workflow exists ────────────────────────────────────────
             var workflowExists = await _gitHub.WorkflowExistsAsync(
                 owner, repo, SyncWorkflowFileName, accessToken, ct);

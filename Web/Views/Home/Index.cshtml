@@ -77,23 +77,27 @@
 Content-Type: application/json
 
 {
-  "installationApiKey": "&lt;non-guessable GUID generated on GitHub App install&gt;",
-  "sourceRepoUrl":      "https://dev.azure.com/org/project/_git/repo",
-  "systemAccessToken":  "$(System.AccessToken)",
-  "pullRequestId":      "42",
-  "commitId":           "abc123",
-  "targetGitHubRepo":   "my-org/my-repo",
-  "branchName":         "feature/my-feature",
-  "prTitle":            "My feature",
-  "prBody":             "Synced from Azure DevOps PR #42",
-  "targetBranch":       "main"
+  "sourceRepoUrl":     "https://dev.azure.com/org/project/_git/repo",
+  "systemAccessToken": "$(System.AccessToken)",
+  "pullRequestId":     "42",
+  "commitId":          "abc123",
+  "targetGitHubRepo":  "my-org/my-repo",
+  "branchName":        "feature/my-feature",
+  "prTitle":           "My feature",
+  "prBody":            "Synced from Azure DevOps PR #42",
+  "targetBranch":      "main"
 }</code></pre>
     <div class="alert alert-info mt-3">
-        <strong>How to obtain the API key:</strong>
-        The <code>installationApiKey</code> is generated automatically when the GitHub App is
-        installed. Click <strong>Install GitHub App</strong> above – after completing the
-        installation on GitHub you will be redirected back here and the key will be displayed
-        immediately. Store it as a secret variable in your Azure DevOps pipeline or key vault –
-        it does not change unless the installation is deleted and re-created.
+        <strong>Authorization – no API key required.</strong>
+        Instead, create a GitHub Actions repository variable named
+        <code>DEVOPS_GITHUB_SYNC_SOURCES</code> in your target GitHub repository.
+        Set its value to a newline-separated list of allowed Azure DevOps source
+        repository URLs. The sync service reads this variable via the GitHub API
+        and only dispatches the workflow when <code>sourceRepoUrl</code> matches
+        one of the listed URLs.
+        <br /><br />
+        <strong>Example variable value:</strong>
+        <pre class="mb-0 mt-1 bg-white p-2 rounded small">https://dev.azure.com/myorg/project/_git/repo-a
+https://dev.azure.com/myorg/project/_git/repo-b</pre>
     </div>
 </div>

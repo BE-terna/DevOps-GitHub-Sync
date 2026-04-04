@@ -26,13 +26,15 @@
 
     <div class="card mt-4 shadow-sm">
         <div class="card-header bg-primary text-white">
-            <h5 class="mb-0">&#128273; Your Installation API Key</h5>
+            <h5 class="mb-0">&#128273; Installation API Key</h5>
         </div>
         <div class="card-body">
             <p class="mb-2">
-                Copy the key below and store it as a <strong>secret variable</strong> in your Azure DevOps
-                pipeline or key vault. You must supply this key in every
-                <code>POST /api/sync/trigger</code> request as <code>installationApiKey</code>.
+                This key is stored with the installation record. It is no longer required
+                to call <code>POST /api/sync/trigger</code> – authorization is now controlled
+                by the <code>DEVOPS_GITHUB_SYNC_SOURCES</code> repository variable on each
+                target GitHub repository (see the <strong>Next steps</strong> section below).
+                Keep this value if you need to identify this installation.
             </p>
             <div class="input-group mb-3">
                 <input id="apiKeyInput" type="text" class="form-control font-monospace"
@@ -44,11 +46,6 @@
             </div>
             <div id="copyConfirm" class="text-success small" style="display:none;">
                 &#10003; Copied to clipboard!
-            </div>
-            <div class="alert alert-warning mt-3 mb-0">
-                <strong>Keep this key secret.</strong>
-                It authorises Azure DevOps pipelines to trigger syncs to repositories covered by this
-                installation. Treat it like a password – store it in a secret vault, not in plain text.
             </div>
         </div>
     </div>
@@ -84,8 +81,11 @@
         <div class="card-body">
             <ol class="mb-0">
                 <li class="mb-2">
-                    <strong>Store the API key as a secret</strong> in your Azure DevOps pipeline
-                    variable group or key vault (e.g. name it <code>DevOpsGitHubSyncApiKey</code>).
+                    <strong>Add the <code>DEVOPS_GITHUB_SYNC_SOURCES</code> variable</strong>
+                    to each target GitHub repository
+                    (<strong>Settings → Secrets and variables → Actions → Variables</strong>).
+                    Set its value to a newline-separated list of the Azure DevOps source
+                    repository URLs that are allowed to trigger a sync to that repo.
                 </li>
                 <li class="mb-2">
                     <strong>Add <code>Sync-DevOps-GitHub.yml</code></strong> to the
@@ -95,7 +95,7 @@
                 <li class="mb-2">
                     <strong>Configure your Azure DevOps pipeline</strong> to call
                     <code>POST /api/sync/trigger</code> when a pull request is created or updated,
-                    passing the API key and the required PR metadata. See the
+                    passing the required PR metadata. See the
                     <a asp-controller="Home" asp-action="Index">API documentation</a> for the
                     full request schema.
                 </li>

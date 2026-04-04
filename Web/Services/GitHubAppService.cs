@@ -199,6 +199,39 @@ public sealed class GitHubAppService
     }
 
     // -------------------------------------------------------------------------
+    // Repository Actions variables
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Reads a GitHub Actions repository variable by name.
+    /// Returns the variable's value, or <c>null</c> if the variable does not exist.
+    /// </summary>
+    public async Task<string?> GetRepoVariableAsync(
+        string owner,
+        string repo,
+        string variableName,
+        string accessToken,
+        CancellationToken ct = default)
+    {
+        var client = _httpClientFactory.CreateClient("GitHub");
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+        var response = await client.GetAsync(
+            $"https://api.github.com/repos/{owner}/{repo}/actions/variables/{variableName}", ct);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
+
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<RepoVariableResponse>(
+            cancellationToken: ct);
+
+        return result?.Value;
+    }
+
+    // -------------------------------------------------------------------------
     // Repository dispatch
     // -------------------------------------------------------------------------
 
@@ -242,5 +275,14 @@ public sealed class GitHubAppService
 
         [JsonPropertyName("expires_at")]
         public DateTimeOffset ExpiresAt { get; set; }
+    }
+
+    private sealed class RepoVariableResponse
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("value")]
+        public string Value { get; set; } = string.Empty;
     }
 }

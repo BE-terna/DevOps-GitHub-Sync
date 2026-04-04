@@ -67,26 +67,27 @@ awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' private-key.pem
 
 Navigate to **GitHub App settings → Install App** and install it on the account / repositories that should receive synced pull requests.
 
-After you click **Install**, two things happen simultaneously:
-
-1. GitHub sends an `installation` webhook POST to `/api/github/webhook` – this records the installation and generates the `installationApiKey` in the database.
-2. GitHub **redirects your browser** to the **Setup URL** (`/github/installed`) where the API key is displayed immediately.
+After you click **Install**, GitHub sends an `installation` webhook POST to `/api/github/webhook` which records the installation in the database, and redirects your browser to the **Setup URL** (`/github/installed`) where a confirmation is displayed.
 
 > **Note:** There is an inherent race between the webhook POST and the browser redirect. If the
 > page loads before the webhook has been processed it will show a "processing" spinner and
 > auto-refresh every few seconds. This typically resolves within a second or two.
 
-### 4 – Copy the `installationApiKey` from the Setup page
+### 4 – Add the `DEVOPS_GITHUB_SYNC_SOURCES` variable to each target GitHub repository
 
-The Setup URL page (`/github/installed`) displays the generated API key in a copyable text box once the installation has been recorded. Copy the key and store it as a **secret variable** in your Azure DevOps pipeline variable group or key vault (e.g. name it `DevOpsGitHubSyncApiKey`).
+For every GitHub repository that will receive synced pull requests, create a repository Actions variable:
 
-This key must be included in every `POST /api/sync/trigger` request as `installationApiKey`.
+1. In the repository go to **Settings → Secrets and variables → Actions → Variables**.
+2. Click **New repository variable**.
+3. Set **Name** to `DEVOPS_GITHUB_SYNC_SOURCES`.
+4. Set **Value** to a newline-separated list of allowed Azure DevOps source repository URLs, for example:
 
-> **Fallback:** If you need to retrieve the key at any time after the initial installation, query the database directly:
->
-> ```sql
-> SELECT InstallationId, AccountLogin, ApiKey FROM GitHubInstallations;
-> ```
+```
+https://dev.azure.com/myorg/project/_git/repo-a
+https://dev.azure.com/myorg/project/_git/repo-b
+```
+
+The sync service reads this variable via the GitHub API and only triggers the workflow when `sourceRepoUrl` in the request matches one of the listed URLs.
 
 ---
 
@@ -300,4 +301,4 @@ After deployment, configure **both URL fields** in your GitHub App settings:
 - [ ] GitHub Environment variables set (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_WEBAPP_NAME`)
 - [ ] First deployment triggered and succeeded
 - [ ] GitHub App installed on target repositories; Setup URL page (`/github/installed`) confirmed working
-- [ ] `installationApiKey` copied from Setup URL page and stored as a secret in Azure DevOps pipeline
+- [ ] `DEVOPS_GITHUB_SYNC_SOURCES` repository variable added to each target GitHub repository with the allowed ADO source URLs
