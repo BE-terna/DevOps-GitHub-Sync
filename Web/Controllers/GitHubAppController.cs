@@ -1,6 +1,5 @@
-using DevOps.GitHub.Sync.Data;
+using DevOps.GitHub.Sync.Web.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Web.Models;
 
 namespace Web.Controllers;
@@ -11,11 +10,11 @@ namespace Web.Controllers;
 /// </summary>
 public class GitHubAppController : Controller
 {
-    private readonly AppDbContext _db;
+    private readonly GitHubAppService _gitHub;
 
-    public GitHubAppController(AppDbContext db)
+    public GitHubAppController(GitHubAppService gitHub)
     {
-        _db = db;
+        _gitHub = gitHub;
     }
 
     /// <summary>
@@ -26,10 +25,7 @@ public class GitHubAppController : Controller
     /// or
     ///   GET /github/installed?installation_id=&lt;id&gt;&amp;setup_action=update
     ///
-    /// If the webhook has already been processed the page shows the installation
-    /// API key that the operator must store as a secret in Azure DevOps.
-    /// If the webhook has not yet arrived (rare race condition) the page renders a
-    /// "still processing" message that auto-refreshes every few seconds.
+    /// Fetches installation details directly from the GitHub API using the App JWT.
     /// </summary>
     [HttpGet("github/installed")]
     public async Task<IActionResult> Installed(
@@ -42,8 +38,7 @@ public class GitHubAppController : Controller
         // a redirect_uri is configured on the app. This app does not implement GitHub
         // OAuth user authentication so the code is intentionally ignored; it is
         // accepted here purely to prevent a query-string mismatch 400.
-        var installation = await _db.GitHubInstallations
-            .FirstOrDefaultAsync(i => i.InstallationId == installationId, ct);
+        var installation = await _gitHub.GetInstallationAsync(installationId, ct);
 
         var vm = new InstallationViewModel
         {
@@ -53,7 +48,6 @@ public class GitHubAppController : Controller
             AccountLogin = installation?.AccountLogin,
             AccountType = installation?.AccountType,
             RepositorySelection = installation?.RepositorySelection,
-            ApiKey = installation?.ApiKey,
         };
 
         return View(vm);

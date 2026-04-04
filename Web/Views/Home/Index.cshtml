@@ -27,8 +27,8 @@
                         Install the <strong>devops-github-sync</strong> GitHub App on any
                         organization or repository. The app requests <em>contents</em> and
                         <em>actions</em> permissions so it can read code and trigger workflows.
-                        Installation tokens are stored securely in Azure SQL and refreshed
-                        automatically before they expire.
+                        Installation tokens are obtained on-demand from the GitHub API and
+                        cached in-memory, refreshed automatically before they expire.
                     </p>
                 </div>
             </div>

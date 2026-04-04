@@ -2,13 +2,7 @@
 @{
     ViewData["Title"] = Model.Found
         ? "App Installed Successfully"
-        : "Installation Processing…";
-}
-
-@if (!Model.Found)
-{
-    // Auto-refresh every 4 seconds while waiting for the webhook to be processed.
-    <meta http-equiv="refresh" content="4" />
+        : "Installation Not Found";
 }
 
 @if (Model.Found)
@@ -21,32 +15,6 @@
             (@Model.AccountType)
             with access to
             <strong>@(Model.RepositorySelection == "all" ? "all repositories" : "selected repositories")</strong>.
-        </div>
-    </div>
-
-    <div class="card mt-4 shadow-sm">
-        <div class="card-header bg-primary text-white">
-            <h5 class="mb-0">&#128273; Installation API Key</h5>
-        </div>
-        <div class="card-body">
-            <p class="mb-2">
-                This key is stored with the installation record. It is no longer required
-                to call <code>POST /api/sync/trigger</code> – authorization is now controlled
-                by the <code>DEVOPS_GITHUB_SYNC_SOURCES</code> repository variable on each
-                target GitHub repository (see the <strong>Next steps</strong> section below).
-                Keep this value if you need to identify this installation.
-            </p>
-            <div class="input-group mb-3">
-                <input id="apiKeyInput" type="text" class="form-control font-monospace"
-                       value="@Model.ApiKey" readonly aria-label="Installation API key" />
-                <button class="btn btn-outline-secondary" type="button"
-                        onclick="copyApiKey()" title="Copy to clipboard">
-                    &#128203; Copy
-                </button>
-            </div>
-            <div id="copyConfirm" class="text-success small" style="display:none;">
-                &#10003; Copied to clipboard!
-            </div>
         </div>
     </div>
 
@@ -105,36 +73,10 @@
 }
 else
 {
-    <div class="text-center mt-5">
-        <div class="spinner-border text-primary mb-3" role="status" style="width:3rem;height:3rem;">
-            <span class="visually-hidden">Loading…</span>
-        </div>
-        <h2>Processing your installation…</h2>
-        <p class="text-muted">
-            Installation <code>@Model.InstallationId</code> is being recorded.
-            This page will refresh automatically in a few seconds.
-        </p>
-        <p class="text-muted small">
-            If this message persists for more than 30 seconds, check that the
-            <strong>Webhook URL</strong> in your GitHub App settings points to
-            <code>/api/github/webhook</code> on this service and that the webhook
-            secret is correctly configured.
-        </p>
+    <div class="alert alert-danger mt-4" role="alert">
+        <strong>Installation not found.</strong>
+        Could not retrieve details for installation <code>@Model.InstallationId</code> from GitHub.
+        Ensure the GitHub App is correctly configured and try reinstalling.
     </div>
 }
 
-@section Scripts {
-    <script>
-        function copyApiKey() {
-            var input = document.getElementById('apiKeyInput');
-            if (!input) return;
-            navigator.clipboard.writeText(input.value).then(function () {
-                var confirm = document.getElementById('copyConfirm');
-                if (confirm) {
-                    confirm.style.display = 'block';
-                    setTimeout(function () { confirm.style.display = 'none'; }, 3000);
-                }
-            });
-        }
-    </script>
-}

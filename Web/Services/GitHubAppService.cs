@@ -1,11 +1,8 @@
+using System.Net;
 using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using DevOps.GitHub.Sync.Data;
-using DevOps.GitHub.Sync.Data.Entities;
 using DevOps.GitHub.Sync.Web.Options;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -15,29 +12,31 @@ namespace DevOps.GitHub.Sync.Web.Services;
 /// <summary>
 /// Handles GitHub App authentication (JWT + installation access tokens) and
 /// GitHub API operations required by the sync workflow.
+/// Installation access tokens are cached in-memory and refreshed automatically.
 /// </summary>
 public sealed class GitHubAppService
 {
     private readonly GitHubAppOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly AppDbContext _db;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<GitHubAppService> _logger;
+
+    private const string TokenCacheKeyPrefix = "GH_Token_";
+    private const int RefreshBufferMinutes = 5;
 
     public GitHubAppService(
         IOptions<GitHubAppOptions> options,
         IHttpClientFactory httpClientFactory,
-        AppDbContext db,
+        IMemoryCache cache,
         ILogger<GitHubAppService> logger)
     {
         _options = options.Value;
         _httpClientFactory = httpClientFactory;
-        _db = db;
+        _cache = cache;
         _logger = logger;
     }
 
-    // -------------------------------------------------------------------------
-    // JWT generation
-    // -------------------------------------------------------------------------
+    // ── JWT generation ────────────────────────────────────────────────────────
 
     /// <summary>
     /// Creates a short-lived JWT signed with the App's RSA private key.
@@ -65,26 +64,79 @@ public sealed class GitHubAppService
         return handler.WriteToken(token);
     }
 
-    // -------------------------------------------------------------------------
-    // Installation access token
-    // -------------------------------------------------------------------------
+    // ── Installation lookup via GitHub API ────────────────────────────────────
 
     /// <summary>
-    /// Returns a valid installation access token for the given installation.
-    /// Fetches a fresh token when the stored one is missing or within 5 minutes of expiry.
+    /// Returns the GitHub App installation that covers the given repository,
+    /// by calling <c>GET /repos/{owner}/{repo}/installation</c>.
+    /// Returns <c>null</c> when no installation covers the repository.
     /// </summary>
-    public async Task<string> GetInstallationAccessTokenAsync(
-        GitHubInstallation installation,
+    public async Task<AppInstallation?> GetInstallationForRepoAsync(
+        string owner,
+        string repo,
         CancellationToken ct = default)
     {
-        const int refreshBufferMinutes = 5;
+        var jwt = CreateAppJwt();
+        var client = _httpClientFactory.CreateClient("GitHub");
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwt);
 
-        if (installation.AccessToken is not null
-            && installation.AccessTokenExpiresAt.HasValue
-            && installation.AccessTokenExpiresAt.Value > DateTimeOffset.UtcNow.AddMinutes(refreshBufferMinutes))
-        {
-            return installation.AccessToken;
-        }
+        var response = await client.GetAsync(
+            $"https://api.github.com/repos/{owner}/{repo}/installation", ct);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<InstallationApiResponse>(
+            cancellationToken: ct);
+
+        return result is null ? null
+            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection);
+    }
+
+    /// <summary>
+    /// Returns the GitHub App installation by its identifier,
+    /// by calling <c>GET /app/installations/{installationId}</c>.
+    /// Returns <c>null</c> when the installation does not exist.
+    /// </summary>
+    public async Task<AppInstallation?> GetInstallationAsync(
+        long installationId,
+        CancellationToken ct = default)
+    {
+        var jwt = CreateAppJwt();
+        var client = _httpClientFactory.CreateClient("GitHub");
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwt);
+
+        var response = await client.GetAsync(
+            $"https://api.github.com/app/installations/{installationId}", ct);
+
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var result = await response.Content.ReadFromJsonAsync<InstallationApiResponse>(
+            cancellationToken: ct);
+
+        return result is null ? null
+            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection);
+    }
+
+    // ── Installation access token ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns a valid installation access token for the given installation ID.
+    /// Tokens are cached in-memory and refreshed when within 5 minutes of expiry.
+    /// </summary>
+    public async Task<string> GetInstallationAccessTokenAsync(
+        long installationId,
+        CancellationToken ct = default)
+    {
+        var cacheKey = TokenCacheKeyPrefix + installationId;
+
+        if (_cache.TryGetValue<string>(cacheKey, out var cached) && cached is not null)
+            return cached;
 
         var jwt = CreateAppJwt();
         var client = _httpClientFactory.CreateClient("GitHub");
@@ -92,7 +144,7 @@ public sealed class GitHubAppService
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwt);
 
         var response = await client.PostAsync(
-            $"https://api.github.com/app/installations/{installation.InstallationId}/access_tokens",
+            $"https://api.github.com/app/installations/{installationId}/access_tokens",
             null, ct);
 
         response.EnsureSuccessStatusCode();
@@ -101,81 +153,12 @@ public sealed class GitHubAppService
             cancellationToken: ct)
             ?? throw new InvalidOperationException("Empty access token response from GitHub.");
 
-        installation.AccessToken = result.Token;
-        installation.AccessTokenExpiresAt = result.ExpiresAt;
-        installation.UpdatedAt = DateTimeOffset.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        _cache.Set(cacheKey, result.Token, result.ExpiresAt.AddMinutes(-RefreshBufferMinutes));
 
         return result.Token;
     }
 
-    // -------------------------------------------------------------------------
-    // Repository permission / installation lookup
-    // -------------------------------------------------------------------------
-
-    /// <summary>
-    /// Returns true when the given installation has access to the target repository.
-    /// For "all repositories" installs the check is purely local (owner login match).
-    /// For "selected" installs the GitHub API is called to confirm access.
-    /// </summary>
-    public async Task<bool> InstallationCoversRepoAsync(
-        GitHubInstallation installation,
-        string owner,
-        string repo,
-        CancellationToken ct = default)
-    {
-        if (installation.RepositorySelection == "all"
-            && string.Equals(installation.AccountLogin, owner, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        // "selected" or cross-owner: verify via GitHub API
-        var token = await GetInstallationAccessTokenAsync(installation, ct);
-        var client = _httpClientFactory.CreateClient("GitHub");
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-        var repoResponse = await client.GetAsync(
-            $"https://api.github.com/repos/{owner}/{repo}", ct);
-
-        return repoResponse.IsSuccessStatusCode;
-    }
-
-    /// <summary>
-    /// Finds the installation record that has access to the given GitHub repository
-    /// by scanning all stored installations. Prefer <see cref="InstallationCoversRepoAsync"/>
-    /// when the installation is already known (i.e. identified by API key).
-    /// </summary>
-    public async Task<GitHubInstallation?> FindInstallationForRepoAsync(
-        string owner,
-        string repo,
-        CancellationToken ct = default)
-    {
-        // First try an exact match on account login (covers "all repositories" installs)
-        var byLogin = await _db.GitHubInstallations
-            .FirstOrDefaultAsync(i => i.AccountLogin == owner, ct);
-
-        if (byLogin is not null)
-            return byLogin;
-
-        // Fall back: verify each installation via the GitHub API
-        var installations = await _db.GitHubInstallations.ToListAsync(ct);
-        foreach (var installation in installations)
-        {
-            if (installation.RepositorySelection == "all")
-                continue; // already checked via AccountLogin above
-
-            if (await InstallationCoversRepoAsync(installation, owner, repo, ct))
-                return installation;
-        }
-
-        return null;
-    }
-
-    // -------------------------------------------------------------------------
-    // Workflow check
-    // -------------------------------------------------------------------------
+    // ── Workflow check ────────────────────────────────────────────────────────
 
     /// <summary>
     /// Returns true when a workflow file with the given name exists in the repository.
@@ -198,9 +181,7 @@ public sealed class GitHubAppService
         return response.IsSuccessStatusCode;
     }
 
-    // -------------------------------------------------------------------------
-    // Repository Actions variables
-    // -------------------------------------------------------------------------
+    // ── Repository Actions variables ──────────────────────────────────────────
 
     /// <summary>
     /// Reads a GitHub Actions repository variable by name.
@@ -220,7 +201,7 @@ public sealed class GitHubAppService
         var response = await client.GetAsync(
             $"https://api.github.com/repos/{owner}/{repo}/actions/variables/{variableName}", ct);
 
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
 
         response.EnsureSuccessStatusCode();
@@ -231,9 +212,7 @@ public sealed class GitHubAppService
         return result?.Value;
     }
 
-    // -------------------------------------------------------------------------
-    // Repository dispatch
-    // -------------------------------------------------------------------------
+    // ── Repository dispatch ───────────────────────────────────────────────────
 
     /// <summary>
     /// Sends a <c>repository_dispatch</c> event to the target GitHub repository.
@@ -264,9 +243,37 @@ public sealed class GitHubAppService
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Private response DTOs
-    // -------------------------------------------------------------------------
+    // ── Public DTOs ───────────────────────────────────────────────────────────
+
+    /// <summary>Minimal view of a GitHub App installation returned by the GitHub API.</summary>
+    public sealed record AppInstallation(
+        long Id,
+        string AccountLogin,
+        string AccountType,
+        string RepositorySelection);
+
+    // ── Private response DTOs ─────────────────────────────────────────────────
+
+    private sealed class InstallationApiResponse
+    {
+        [JsonPropertyName("id")]
+        public long Id { get; set; }
+
+        [JsonPropertyName("account")]
+        public InstallationAccount Account { get; set; } = new();
+
+        [JsonPropertyName("repository_selection")]
+        public string RepositorySelection { get; set; } = string.Empty;
+    }
+
+    private sealed class InstallationAccount
+    {
+        [JsonPropertyName("login")]
+        public string Login { get; set; } = string.Empty;
+
+        [JsonPropertyName("type")]
+        public string Type { get; set; } = string.Empty;
+    }
 
     private sealed class AccessTokenResponse
     {

@@ -1,34 +1,27 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using DevOps.GitHub.Sync.Data;
-using DevOps.GitHub.Sync.Data.Entities;
 using DevOps.GitHub.Sync.Web.Models.Webhooks;
 using DevOps.GitHub.Sync.Web.Options;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace DevOps.GitHub.Sync.Web.Controllers;
 
 /// <summary>
-/// Receives GitHub App webhook events.
-/// Handles <c>installation</c> events to persist (or remove) installation records.
+/// Receives GitHub App webhook events and logs installation lifecycle changes.
 /// </summary>
 [ApiController]
 [Route("api/github/webhook")]
 public class GitHubWebhookController : ControllerBase
 {
-    private readonly AppDbContext _db;
     private readonly GitHubAppOptions _options;
     private readonly ILogger<GitHubWebhookController> _logger;
 
     public GitHubWebhookController(
-        AppDbContext db,
         IOptions<GitHubAppOptions> options,
         ILogger<GitHubWebhookController> logger)
     {
-        _db = db;
         _options = options.Value;
         _logger = logger;
     }
@@ -59,22 +52,13 @@ public class GitHubWebhookController : ControllerBase
         if (payload is null)
             return BadRequest("Could not parse webhook payload.");
 
-        switch (payload.Action)
-        {
-            case "created":
-            case "new_permissions_accepted":
-                await UpsertInstallationAsync(payload, rawBody, ct);
-                break;
-
-            case "deleted":
-            case "suspend":
-                await RemoveInstallationAsync(payload.Installation.Id, ct);
-                break;
-
-            default:
-                _logger.LogInformation("Unhandled installation action: {Action}", Sanitize(payload.Action));
-                break;
-        }
+        _logger.LogInformation(
+            "Installation {Action}: id={InstallationId}, account={AccountLogin} ({AccountType}), selection={RepositorySelection}.",
+            Sanitize(payload.Action),
+            payload.Installation.Id,
+            Sanitize(payload.Installation.Account.Login),
+            Sanitize(payload.Installation.Account.Type),
+            Sanitize(payload.Installation.RepositorySelection));
 
         return Ok();
     }
@@ -100,52 +84,6 @@ public class GitHubWebhookController : ControllerBase
         return CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(expected),
             Encoding.UTF8.GetBytes(signatureHeader.ToLowerInvariant()));
-    }
-
-    private async Task UpsertInstallationAsync(
-        InstallationWebhookPayload payload,
-        string rawBody,
-        CancellationToken ct)
-    {
-        var existing = await _db.GitHubInstallations
-            .FirstOrDefaultAsync(i => i.InstallationId == payload.Installation.Id, ct);
-
-        if (existing is null)
-        {
-            existing = new GitHubInstallation
-            {
-                InstallationId = payload.Installation.Id,
-                // Generate a non-guessable API key once and keep it stable across re-installs.
-                ApiKey = Guid.NewGuid().ToString("N"),
-            };
-            _db.GitHubInstallations.Add(existing);
-        }
-
-        existing.AccountLogin = payload.Installation.Account.Login;
-        existing.AccountType = payload.Installation.Account.Type;
-        existing.RepositorySelection = payload.Installation.RepositorySelection;
-        existing.RawPayload = rawBody;
-        existing.UpdatedAt = DateTimeOffset.UtcNow;
-
-        await _db.SaveChangesAsync(ct);
-
-        _logger.LogInformation(
-            "Installation {Id} ({Login}) upserted.",
-            payload.Installation.Id,
-            Sanitize(payload.Installation.Account.Login));
-    }
-
-    private async Task RemoveInstallationAsync(long installationId, CancellationToken ct)
-    {
-        var existing = await _db.GitHubInstallations
-            .FirstOrDefaultAsync(i => i.InstallationId == installationId, ct);
-
-        if (existing is not null)
-        {
-            _db.GitHubInstallations.Remove(existing);
-            await _db.SaveChangesAsync(ct);
-            _logger.LogInformation("Installation {Id} removed.", installationId);
-        }
     }
 
     /// <summary>Removes newline characters from a user-supplied value before it is written to a log.</summary>

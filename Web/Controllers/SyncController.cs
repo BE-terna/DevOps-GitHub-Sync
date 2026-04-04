@@ -1,9 +1,7 @@
-using DevOps.GitHub.Sync.Data;
-using DevOps.GitHub.Sync.Data.Entities;
+using System.Diagnostics;
 using DevOps.GitHub.Sync.Web.Models;
 using DevOps.GitHub.Sync.Web.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace DevOps.GitHub.Sync.Web.Controllers;
 
@@ -14,6 +12,10 @@ namespace DevOps.GitHub.Sync.Web.Controllers;
 [Route("api/sync")]
 public class SyncController : ControllerBase
 {
+    internal const string ActivitySourceName = "DevOps.GitHub.Sync";
+
+    private static readonly ActivitySource s_activitySource = new(ActivitySourceName);
+
     private const string SyncWorkflowFileName = "Sync-DevOps-GitHub.yml";
     private const string SyncEventType = "Sync-DevOps-GitHub";
 
@@ -24,16 +26,13 @@ public class SyncController : ControllerBase
     /// </summary>
     private const string AllowedSourcesVariableName = "DEVOPS_GITHUB_SYNC_SOURCES";
 
-    private readonly AppDbContext _db;
     private readonly GitHubAppService _gitHub;
     private readonly ILogger<SyncController> _logger;
 
     public SyncController(
-        AppDbContext db,
         GitHubAppService gitHub,
         ILogger<SyncController> logger)
     {
-        _db = db;
         _gitHub = gitHub;
         _logger = logger;
     }
@@ -69,20 +68,32 @@ public class SyncController : ControllerBase
         var owner = parts[0];
         var repo = parts[1];
 
+        using var activity = s_activitySource.StartActivity("sync.trigger");
+        activity?.SetTag("sync.source_repo", request.SourceRepoUrl);
+        activity?.SetTag("sync.target_repo", request.TargetGitHubRepo);
+        activity?.SetTag("sync.pull_request_id", request.PullRequestId);
+        activity?.SetTag("sync.commit_id", request.CommitId);
+        activity?.SetTag("sync.branch_name", request.BranchName);
+
         // ── Find the GitHub App installation for the target repo ──────────────
-        var installation = await _gitHub.FindInstallationForRepoAsync(owner, repo, ct);
+        var installation = await _gitHub.GetInstallationForRepoAsync(owner, repo, ct);
         if (installation is null)
         {
             _logger.LogWarning(
                 "Sync trigger rejected – no installation found for {Repo}.",
                 Sanitize(request.TargetGitHubRepo));
 
+            activity?.SetTag("sync.status", "Rejected");
+            activity?.SetStatus(ActivityStatusCode.Error, "No GitHub App installation found");
+
             return StatusCode(403,
                 $"No GitHub App installation found that covers {request.TargetGitHubRepo}.");
         }
 
+        activity?.SetTag("sync.installation_id", installation.Id);
+
         // ── Obtain an installation access token ───────────────────────────────
-        var accessToken = await _gitHub.GetInstallationAccessTokenAsync(installation, ct);
+        var accessToken = await _gitHub.GetInstallationAccessTokenAsync(installation.Id, ct);
 
         // ── Read the allowed-sources variable from the target repo ────────────
         // The variable value is a newline-separated list of ADO source repo URLs.
@@ -95,6 +106,9 @@ public class SyncController : ControllerBase
                 "Sync trigger rejected – variable '{Variable}' not found in {Repo}.",
                 AllowedSourcesVariableName,
                 Sanitize(request.TargetGitHubRepo));
+
+            activity?.SetTag("sync.status", "Rejected");
+            activity?.SetStatus(ActivityStatusCode.Error, $"Variable '{AllowedSourcesVariableName}' not found");
 
             return StatusCode(403,
                 $"Repository variable '{AllowedSourcesVariableName}' not found in {request.TargetGitHubRepo}. " +
@@ -113,23 +127,13 @@ public class SyncController : ControllerBase
                 "Sync trigger rejected – source repo is not in the allowed list for {Repo}.",
                 Sanitize(request.TargetGitHubRepo));
 
+            activity?.SetTag("sync.status", "Rejected");
+            activity?.SetStatus(ActivityStatusCode.Error, "Source repository not in allowed list");
+
             return StatusCode(403,
                 $"Source repository is not listed in '{AllowedSourcesVariableName}' " +
                 $"for {request.TargetGitHubRepo}.");
         }
-
-        // ── Audit record ───────────────────────────────────────────────────────
-        var auditRecord = new SyncRequest
-        {
-            SourceRepoUrl = request.SourceRepoUrl,
-            TargetGitHubRepo = request.TargetGitHubRepo,
-            PullRequestId = request.PullRequestId,
-            CommitId = request.CommitId,
-            BranchName = request.BranchName,
-            Status = "Pending",
-        };
-        _db.SyncRequests.Add(auditRecord);
-        await _db.SaveChangesAsync(ct);
 
         try
         {
@@ -145,10 +149,8 @@ public class SyncController : ControllerBase
                     SyncWorkflowFileName,
                     Sanitize(request.TargetGitHubRepo));
 
-                auditRecord.Status = "Failed";
-                auditRecord.ErrorMessage = msg;
-                auditRecord.UpdatedAt = DateTimeOffset.UtcNow;
-                await _db.SaveChangesAsync(ct);
+                activity?.SetTag("sync.status", "Failed");
+                activity?.SetStatus(ActivityStatusCode.Error, msg);
 
                 return NotFound(msg);
             }
@@ -176,11 +178,10 @@ public class SyncController : ControllerBase
                 Sanitize(request.TargetGitHubRepo),
                 Sanitize(request.PullRequestId));
 
-            auditRecord.Status = "Dispatched";
-            auditRecord.UpdatedAt = DateTimeOffset.UtcNow;
-            await _db.SaveChangesAsync(ct);
+            activity?.SetTag("sync.status", "Dispatched");
 
-            return Ok(new { message = "Sync dispatched successfully.", syncRequestId = auditRecord.Id });
+            var traceId = Activity.Current?.TraceId.ToString();
+            return Ok(new { message = "Sync dispatched successfully.", traceId });
         }
         catch (Exception ex)
         {
@@ -189,10 +190,8 @@ public class SyncController : ControllerBase
                 "Error processing sync trigger for PR {PrId}.",
                 Sanitize(request.PullRequestId));
 
-            auditRecord.Status = "Failed";
-            auditRecord.ErrorMessage = ex.Message;
-            auditRecord.UpdatedAt = DateTimeOffset.UtcNow;
-            await _db.SaveChangesAsync(ct);
+            activity?.SetTag("sync.status", "Failed");
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
 
             return StatusCode(500, "An error occurred while processing the sync request.");
         }

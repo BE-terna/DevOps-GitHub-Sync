@@ -6,8 +6,8 @@ namespace Web.Models;
 public class InstallationViewModel
 {
     /// <summary>
-    /// <c>true</c> when the installation record has already been persisted by the
-    /// webhook handler; <c>false</c> when the redirect arrived before the webhook.
+    /// <c>true</c> when the GitHub API returned the installation details;
+    /// <c>false</c> when the installation could not be found.
     /// </summary>
     public bool Found { get; set; }
 
@@ -27,10 +27,4 @@ public class InstallationViewModel
 
     /// <summary>"all" or "selected".</summary>
     public string? RepositorySelection { get; set; }
-
-    /// <summary>
-    /// The non-guessable API key to be stored as a secret in Azure DevOps pipelines.
-    /// This value must be supplied in every <c>POST /api/sync/trigger</c> request.
-    /// </summary>
-    public string? ApiKey { get; set; }
 }

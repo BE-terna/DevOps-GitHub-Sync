@@ -1,7 +1,6 @@
-using DevOps.GitHub.Sync.Data;
+using DevOps.GitHub.Sync.Web.Controllers;
 using DevOps.GitHub.Sync.Web.Options;
 using DevOps.GitHub.Sync.Web.Services;
-using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,14 +10,8 @@ builder.AddServiceDefaults();
 builder.Services.Configure<GitHubAppOptions>(
     builder.Configuration.GetSection(GitHubAppOptions.SectionName));
 
-// ── Database (EF Core 10.0.0 / Azure SQL) ────────────────────────────────────
-// EF Core 10 ships alongside .NET 10 (November 2025).
-var connectionString = builder.Configuration.GetConnectionString("DevOpsGitHubSync")
-    ?? throw new InvalidOperationException(
-        "Connection string 'DevOpsGitHubSync' not found. " +
-        "Ensure the Aspire AppHost wires up the Azure SQL resource.");
-
-builder.Services.AddDataServices(connectionString);
+// ── In-memory cache (used to cache GitHub installation access tokens) ─────────
+builder.Services.AddMemoryCache();
 
 // ── HTTP client for GitHub API ────────────────────────────────────────────────
 builder.Services.AddHttpClient("GitHub", client =>
@@ -29,7 +22,11 @@ builder.Services.AddHttpClient("GitHub", client =>
 });
 
 // ── Application services ──────────────────────────────────────────────────────
-builder.Services.AddScoped<GitHubAppService>();
+builder.Services.AddSingleton<GitHubAppService>();
+
+// ── OpenTelemetry – custom activity source for sync request tracing ───────────
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing.AddSource(SyncController.ActivitySourceName));
 
 // ── MVC + API controllers ─────────────────────────────────────────────────────
 builder.Services.AddControllersWithViews();
@@ -37,13 +34,6 @@ builder.Services.AddControllersWithViews();
 var app = builder.Build();
 
 app.MapDefaultEndpoints();
-
-// ── Auto-apply EF migrations on startup ───────────────────────────────────────
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
-}
 
 // ── HTTP pipeline ─────────────────────────────────────────────────────────────
 if (!app.Environment.IsDevelopment())
