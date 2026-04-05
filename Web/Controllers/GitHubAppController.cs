@@ -1,21 +1,15 @@
+using DevOps.GitHub.Sync.Web.Models;
 using DevOps.GitHub.Sync.Web.Services;
 using Microsoft.AspNetCore.Mvc;
-using Web.Models;
 
-namespace Web.Controllers;
+namespace DevOps.GitHub.Sync.Web.Controllers;
 
 /// <summary>
 /// Handles browser-facing GitHub App flows – specifically the post-installation
 /// redirect that GitHub sends after a user installs (or updates) the app.
 /// </summary>
-public class GitHubAppController : Controller
+public class GitHubAppController(GitHubAppService gitHub) : Controller
 {
-    private readonly GitHubAppService _gitHub;
-
-    public GitHubAppController(GitHubAppService gitHub)
-    {
-        _gitHub = gitHub;
-    }
 
     /// <summary>
     /// Landing page after a GitHub App installation or update.
@@ -38,7 +32,7 @@ public class GitHubAppController : Controller
         // a redirect_uri is configured on the app. This app does not implement GitHub
         // OAuth user authentication so the code is intentionally ignored; it is
         // accepted here purely to prevent a query-string mismatch 400.
-        var installation = await _gitHub.GetInstallationAsync(installationId, ct);
+        var installation = await gitHub.GetInstallationAsync(installationId, ct);
 
         var vm = new InstallationViewModel
         {
@@ -48,6 +42,7 @@ public class GitHubAppController : Controller
             AccountLogin = installation?.AccountLogin,
             AccountType = installation?.AccountType,
             RepositorySelection = installation?.RepositorySelection,
+            SuspendedAt = installation?.SuspendedAt,
         };
 
         return View(vm);

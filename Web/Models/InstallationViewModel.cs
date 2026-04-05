@@ -1,4 +1,4 @@
-namespace Web.Models;
+namespace DevOps.GitHub.Sync.Web.Models;
 
 /// <summary>
 /// View-model for the GitHub App post-installation redirect page (<c>GET /github/installed</c>).
@@ -27,4 +27,7 @@ public class InstallationViewModel
 
     /// <summary>"all" or "selected".</summary>
     public string? RepositorySelection { get; set; }
+
+    /// <summary>Timestamp when the installation was suspended, if applicable.</summary>
+    public DateTimeOffset? SuspendedAt { get; set; }
 }

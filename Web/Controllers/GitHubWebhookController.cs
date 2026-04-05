@@ -1,10 +1,10 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using DevOps.GitHub.Sync.Web.Models.Webhooks;
 using DevOps.GitHub.Sync.Web.Options;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace DevOps.GitHub.Sync.Web.Controllers;
 
@@ -13,18 +13,11 @@ namespace DevOps.GitHub.Sync.Web.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/github/webhook")]
-public class GitHubWebhookController : ControllerBase
+public class GitHubWebhookController(
+    IOptions<GitHubAppOptions> options,
+    ILogger<GitHubWebhookController> logger) : ControllerBase
 {
-    private readonly GitHubAppOptions _options;
-    private readonly ILogger<GitHubWebhookController> _logger;
-
-    public GitHubWebhookController(
-        IOptions<GitHubAppOptions> options,
-        ILogger<GitHubWebhookController> logger)
-    {
-        _options = options.Value;
-        _logger = logger;
-    }
+    private readonly GitHubAppOptions _options = options.Value;
 
     [HttpPost]
     public async Task<IActionResult> Receive(CancellationToken ct)
@@ -38,21 +31,25 @@ public class GitHubWebhookController : ControllerBase
         // ── Verify HMAC-SHA256 signature ──────────────────────────────────────
         if (!VerifySignature(rawBody, Request.Headers["X-Hub-Signature-256"].ToString()))
         {
-            _logger.LogWarning("Webhook signature validation failed.");
+            logger.LogWarning("Webhook signature validation failed.");
             return Unauthorized("Invalid webhook signature.");
         }
 
         var eventType = Request.Headers["X-GitHub-Event"].ToString();
-        _logger.LogInformation("Received GitHub webhook event: {Event}", Sanitize(eventType));
+        logger.LogInformation("Received GitHub webhook event: {Event}", Sanitize(eventType));
 
         if (eventType != "installation")
+        {
             return Ok();
+        }
 
         var payload = JsonSerializer.Deserialize<InstallationWebhookPayload>(rawBody);
         if (payload is null)
+        {
             return BadRequest("Could not parse webhook payload.");
+        }
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Installation {Action}: id={InstallationId}, account={AccountLogin} ({AccountType}), selection={RepositorySelection}.",
             Sanitize(payload.Action),
             payload.Installation.Id,
@@ -87,7 +84,9 @@ public class GitHubWebhookController : ControllerBase
     }
 
     /// <summary>Removes newline characters from a user-supplied value before it is written to a log.</summary>
-    private static string Sanitize(string value) =>
-        value.Replace("\r", string.Empty, StringComparison.Ordinal)
+    private static string Sanitize(string value)
+    {
+        return value.Replace("\r", string.Empty, StringComparison.Ordinal)
              .Replace("\n", string.Empty, StringComparison.Ordinal);
+    }
 }

@@ -26,5 +26,5 @@ public sealed class GitHubAppOptions
     /// the slug is <c>devops-github-sync</c>.
     /// Used to construct the installation link on the home page.
     /// </summary>
-    public string AppSlug { get; set; } = string.Empty;
+    public string AppSlug { get; set; } = "devops-github-sync";
 }

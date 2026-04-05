@@ -1,4 +1,4 @@
-namespace Web.Models;
+namespace DevOps.GitHub.Sync.Web.Models;
 
 public class ErrorViewModel
 {

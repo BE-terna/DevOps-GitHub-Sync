@@ -1,19 +1,14 @@
-using System.Diagnostics;
+using DevOps.GitHub.Sync.Web.Models;
 using DevOps.GitHub.Sync.Web.Options;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Web.Models;
+using System.Diagnostics;
 
-namespace Web.Controllers;
+namespace DevOps.GitHub.Sync.Web.Controllers;
 
-public class HomeController : Controller
+public class HomeController(IOptions<GitHubAppOptions> gitHubOptions) : Controller
 {
-    private readonly GitHubAppOptions _gitHubOptions;
-
-    public HomeController(IOptions<GitHubAppOptions> gitHubOptions)
-    {
-        _gitHubOptions = gitHubOptions.Value;
-    }
+    private readonly GitHubAppOptions _gitHubOptions = gitHubOptions.Value;
 
     public IActionResult Index()
     {

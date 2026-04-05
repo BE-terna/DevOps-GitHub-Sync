@@ -1,11 +1,11 @@
-using System.Net;
-using System.Security.Cryptography;
-using System.Text.Json.Serialization;
 using DevOps.GitHub.Sync.Web.Options;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 
 namespace DevOps.GitHub.Sync.Web.Services;
 
@@ -14,27 +14,15 @@ namespace DevOps.GitHub.Sync.Web.Services;
 /// GitHub API operations required by the sync workflow.
 /// Installation access tokens are cached in-memory and refreshed automatically.
 /// </summary>
-public sealed class GitHubAppService
+public sealed class GitHubAppService(
+    IOptions<GitHubAppOptions> options,
+    IHttpClientFactory httpClientFactory,
+    IMemoryCache cache,
+    ILogger<GitHubAppService> logger)
 {
-    private readonly GitHubAppOptions _options;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IMemoryCache _cache;
-    private readonly ILogger<GitHubAppService> _logger;
-
+    private readonly GitHubAppOptions _options = options.Value;
     private const string TokenCacheKeyPrefix = "GH_Token_";
     private const int RefreshBufferMinutes = 5;
-
-    public GitHubAppService(
-        IOptions<GitHubAppOptions> options,
-        IHttpClientFactory httpClientFactory,
-        IMemoryCache cache,
-        ILogger<GitHubAppService> logger)
-    {
-        _options = options.Value;
-        _httpClientFactory = httpClientFactory;
-        _cache = cache;
-        _logger = logger;
-    }
 
     // ── JWT generation ────────────────────────────────────────────────────────
 
@@ -77,7 +65,7 @@ public sealed class GitHubAppService
         CancellationToken ct = default)
     {
         var jwt = CreateAppJwt();
-        var client = _httpClientFactory.CreateClient("GitHub");
+        var client = httpClientFactory.CreateClient("GitHub");
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwt);
 
@@ -85,7 +73,9 @@ public sealed class GitHubAppService
             $"https://api.github.com/repos/{owner}/{repo}/installation", ct);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
+        {
             return null;
+        }
 
         response.EnsureSuccessStatusCode();
 
@@ -93,7 +83,7 @@ public sealed class GitHubAppService
             cancellationToken: ct);
 
         return result is null ? null
-            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection);
+            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection, result.SuspendedAt);
     }
 
     /// <summary>
@@ -106,7 +96,7 @@ public sealed class GitHubAppService
         CancellationToken ct = default)
     {
         var jwt = CreateAppJwt();
-        var client = _httpClientFactory.CreateClient("GitHub");
+        var client = httpClientFactory.CreateClient("GitHub");
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwt);
 
@@ -114,13 +104,15 @@ public sealed class GitHubAppService
             $"https://api.github.com/app/installations/{installationId}", ct);
 
         if (!response.IsSuccessStatusCode)
+        {
             return null;
+        }
 
         var result = await response.Content.ReadFromJsonAsync<InstallationApiResponse>(
             cancellationToken: ct);
 
         return result is null ? null
-            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection);
+            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection, result.SuspendedAt);
     }
 
     // ── Installation access token ─────────────────────────────────────────────
@@ -135,11 +127,13 @@ public sealed class GitHubAppService
     {
         var cacheKey = TokenCacheKeyPrefix + installationId;
 
-        if (_cache.TryGetValue<string>(cacheKey, out var cached) && cached is not null)
+        if (cache.TryGetValue<string>(cacheKey, out var cached) && cached is not null)
+        {
             return cached;
+        }
 
         var jwt = CreateAppJwt();
-        var client = _httpClientFactory.CreateClient("GitHub");
+        var client = httpClientFactory.CreateClient("GitHub");
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwt);
 
@@ -153,7 +147,7 @@ public sealed class GitHubAppService
             cancellationToken: ct)
             ?? throw new InvalidOperationException("Empty access token response from GitHub.");
 
-        _cache.Set(cacheKey, result.Token, result.ExpiresAt.AddMinutes(-RefreshBufferMinutes));
+        cache.Set(cacheKey, result.Token, result.ExpiresAt.AddMinutes(-RefreshBufferMinutes));
 
         return result.Token;
     }
@@ -170,7 +164,7 @@ public sealed class GitHubAppService
         string accessToken,
         CancellationToken ct = default)
     {
-        var client = _httpClientFactory.CreateClient("GitHub");
+        var client = httpClientFactory.CreateClient("GitHub");
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
 
@@ -194,7 +188,7 @@ public sealed class GitHubAppService
         string accessToken,
         CancellationToken ct = default)
     {
-        var client = _httpClientFactory.CreateClient("GitHub");
+        var client = httpClientFactory.CreateClient("GitHub");
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
 
@@ -202,7 +196,9 @@ public sealed class GitHubAppService
             $"https://api.github.com/repos/{owner}/{repo}/actions/variables/{variableName}", ct);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
+        {
             return null;
+        }
 
         response.EnsureSuccessStatusCode();
 
@@ -225,7 +221,7 @@ public sealed class GitHubAppService
         object clientPayload,
         CancellationToken ct = default)
     {
-        var client = _httpClientFactory.CreateClient("GitHub");
+        var client = httpClientFactory.CreateClient("GitHub");
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
 
@@ -250,7 +246,9 @@ public sealed class GitHubAppService
         long Id,
         string AccountLogin,
         string AccountType,
-        string RepositorySelection);
+        string RepositorySelection,
+        DateTimeOffset? SuspendedAt = null
+        );
 
     // ── Private response DTOs ─────────────────────────────────────────────────
 
@@ -264,6 +262,12 @@ public sealed class GitHubAppService
 
         [JsonPropertyName("repository_selection")]
         public string RepositorySelection { get; set; } = string.Empty;
+
+        [JsonPropertyName("html_url")]
+        public string? HtmlUrl { get; set; }
+
+        [JsonPropertyName("suspended_at")]
+        public DateTimeOffset? SuspendedAt { get; set; }
     }
 
     private sealed class InstallationAccount

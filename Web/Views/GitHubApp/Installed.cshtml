@@ -37,6 +37,10 @@
                         <th scope="row">Repository access</th>
                         <td>@(Model.RepositorySelection == "all" ? "All repositories" : "Selected repositories")</td>
                     </tr>
+                    <tr>
+                        <th scope="row">Suspended at</th>
+                        <td>@(Model.SuspendedAt?.ToString("u") ?? "N/A")</td>
+                    </tr>
                 </tbody>
             </table>
         </div>

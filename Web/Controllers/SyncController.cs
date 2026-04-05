@@ -1,7 +1,7 @@
-using System.Diagnostics;
 using DevOps.GitHub.Sync.Web.Models;
 using DevOps.GitHub.Sync.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using System.Diagnostics;
 
 namespace DevOps.GitHub.Sync.Web.Controllers;
 
@@ -10,7 +10,9 @@ namespace DevOps.GitHub.Sync.Web.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/sync")]
-public class SyncController : ControllerBase
+public class SyncController(
+    GitHubAppService gitHub,
+    ILogger<SyncController> logger) : ControllerBase
 {
     internal const string ActivitySourceName = "DevOps.GitHub.Sync";
 
@@ -25,17 +27,6 @@ public class SyncController : ControllerBase
     /// The GitHub App installation must have the <c>Variables: Read</c> permission.
     /// </summary>
     private const string AllowedSourcesVariableName = "DEVOPS_GITHUB_SYNC_SOURCES";
-
-    private readonly GitHubAppService _gitHub;
-    private readonly ILogger<SyncController> _logger;
-
-    public SyncController(
-        GitHubAppService gitHub,
-        ILogger<SyncController> logger)
-    {
-        _gitHub = gitHub;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Accepts a sync request from an Azure DevOps pipeline and triggers the
@@ -58,12 +49,16 @@ public class SyncController : ControllerBase
         CancellationToken ct)
     {
         if (!ModelState.IsValid)
+        {
             return BadRequest(ModelState);
+        }
 
         // ── Parse owner/repo from the target ──────────────────────────────────
         var parts = request.TargetGitHubRepo.Split('/', 2);
         if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+        {
             return BadRequest("targetGitHubRepo must be in 'owner/repo' format.");
+        }
 
         var owner = parts[0];
         var repo = parts[1];
@@ -76,10 +71,10 @@ public class SyncController : ControllerBase
         activity?.SetTag("sync.branch_name", request.BranchName);
 
         // ── Find the GitHub App installation for the target repo ──────────────
-        var installation = await _gitHub.GetInstallationForRepoAsync(owner, repo, ct);
+        var installation = await gitHub.GetInstallationForRepoAsync(owner, repo, ct);
         if (installation is null)
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 "Sync trigger rejected – no installation found for {Repo}.",
                 Sanitize(request.TargetGitHubRepo));
 
@@ -93,16 +88,16 @@ public class SyncController : ControllerBase
         activity?.SetTag("sync.installation_id", installation.Id);
 
         // ── Obtain an installation access token ───────────────────────────────
-        var accessToken = await _gitHub.GetInstallationAccessTokenAsync(installation.Id, ct);
+        var accessToken = await gitHub.GetInstallationAccessTokenAsync(installation.Id, ct);
 
         // ── Read the allowed-sources variable from the target repo ────────────
         // The variable value is a newline-separated list of ADO source repo URLs.
-        var variableValue = await _gitHub.GetRepoVariableAsync(
+        var variableValue = await gitHub.GetRepoVariableAsync(
             owner, repo, AllowedSourcesVariableName, accessToken, ct);
 
         if (variableValue is null)
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 "Sync trigger rejected – variable '{Variable}' not found in {Repo}.",
                 AllowedSourcesVariableName,
                 Sanitize(request.TargetGitHubRepo));
@@ -123,7 +118,7 @@ public class SyncController : ControllerBase
 
         if (!allowedSources.Contains(request.SourceRepoUrl))
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 "Sync trigger rejected – source repo is not in the allowed list for {Repo}.",
                 Sanitize(request.TargetGitHubRepo));
 
@@ -138,13 +133,13 @@ public class SyncController : ControllerBase
         try
         {
             // ── Verify workflow exists ────────────────────────────────────────
-            var workflowExists = await _gitHub.WorkflowExistsAsync(
+            var workflowExists = await gitHub.WorkflowExistsAsync(
                 owner, repo, SyncWorkflowFileName, accessToken, ct);
 
             if (!workflowExists)
             {
                 var msg = $"Workflow '{SyncWorkflowFileName}' not found in {request.TargetGitHubRepo}.";
-                _logger.LogWarning(
+                logger.LogWarning(
                     "Workflow '{WorkflowFile}' not found in {Repo}.",
                     SyncWorkflowFileName,
                     Sanitize(request.TargetGitHubRepo));
@@ -169,10 +164,10 @@ public class SyncController : ControllerBase
             };
 
             // ── Trigger repository_dispatch ───────────────────────────────────
-            await _gitHub.TriggerRepositoryDispatchAsync(
+            await gitHub.TriggerRepositoryDispatchAsync(
                 owner, repo, accessToken, SyncEventType, payload, ct);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Dispatched '{Event}' to {Repo} for PR {PrId}.",
                 SyncEventType,
                 Sanitize(request.TargetGitHubRepo),
@@ -185,7 +180,7 @@ public class SyncController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(
+            logger.LogError(
                 ex,
                 "Error processing sync trigger for PR {PrId}.",
                 Sanitize(request.PullRequestId));
@@ -198,7 +193,9 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>Removes newline characters from a user-supplied value before it is written to a log.</summary>
-    private static string Sanitize(string value) =>
-        value.Replace("\r", string.Empty, StringComparison.Ordinal)
+    private static string Sanitize(string value)
+    {
+        return value.Replace("\r", string.Empty, StringComparison.Ordinal)
              .Replace("\n", string.Empty, StringComparison.Ordinal);
+    }
 }
