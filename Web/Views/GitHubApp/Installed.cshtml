@@ -1,4 +1,5 @@
 @model InstallationViewModel
+@using DevOps.GitHub.Sync.Web.Models
 @{
     ViewData["Title"] = Model.Found
         ? "App Installed Successfully"
@@ -53,11 +54,126 @@
         <div class="card-body">
             <ol class="mb-0">
                 <li class="mb-2">
-                    <strong>Add the <code>DEVOPS_GITHUB_SYNC_SOURCES</code> variable</strong>
-                    to each target GitHub repository
-                    (<strong>Settings → Secrets and variables → Actions → Variables</strong>).
-                    Set its value to a newline-separated list of the Azure DevOps source
-                    repository URLs that are allowed to trigger a sync to that repo.
+                    @* ── Step 1: source-approval method – depends on permissions ─────────────── *@
+                    @if (Model.ApprovalSetupStatus == SourceApprovalSetupStatus.HasVariablesPermission)
+                    {
+                        <strong>Add the <code>DEVOPS_GITHUB_SYNC_SOURCES</code> variable</strong>
+                        <text>to each target GitHub repository
+                        (<strong>Settings → Secrets and variables → Actions → Variables</strong>).
+                        Set its value to a newline-separated list of the Azure DevOps source
+                        repository URLs that are allowed to trigger a sync to that repo.</text>
+                    }
+                    else if (Model.ApprovalSetupStatus == SourceApprovalSetupStatus.OrgPropertyDefined)
+                    {
+                        <div class="alert alert-success py-2 mb-2" role="alert">
+                            <strong>✔ Organisation custom property <code>GitSyncSource</code> is already defined.</strong>
+                        </div>
+                        <strong>Set the <code>GitSyncSource</code> custom property on each target repository.</strong>
+                        <ol class="mt-2">
+                            <li>Open the repository on GitHub.</li>
+                            <li>Go to <strong>Settings → Custom properties</strong>.</li>
+                            <li>Find <code>GitSyncSource</code> and click <strong>Edit</strong>.</li>
+                            <li>Set its value to the Azure DevOps source repository URL (or a newline-separated list of URLs) that are allowed to trigger a sync to that repository.</li>
+                        </ol>
+                        <p class="mt-2 mb-0 text-muted small">
+                            The sync service reads this property via the GitHub API
+                            (<code>GET /repos/{owner}/{repo}/properties/values</code>) and only
+                            triggers the workflow when <code>sourceRepoUrl</code> matches one of
+                            the listed URLs.
+                        </p>
+                    }
+                    else if (Model.ApprovalSetupStatus == SourceApprovalSetupStatus.OrgPropertyNotDefined)
+                    {
+                        <div class="alert alert-warning py-2 mb-2" role="alert">
+                            <strong>⚠ The organisation has not defined the <code>GitSyncSource</code> custom property yet.</strong>
+                        </div>
+                        <p>
+                            The GitHub App installation does not have
+                            <strong>Actions variables: read</strong> permission, so source-repository
+                            approval is handled via a GitHub custom repository property named
+                            <code>GitSyncSource</code>. That property must first be created in the
+                            organisation's custom property schema:
+                        </p>
+                        <ol>
+                            <li>
+                                Go to your organisation settings:
+                                <a href="https://github.com/organizations/@Model.AccountLogin/settings/custom-properties"
+                                   target="_blank" rel="noopener noreferrer">
+                                    github.com/organizations/@Model.AccountLogin/settings/custom-properties
+                                </a>
+                            </li>
+                            <li>Click <strong>New property</strong>.</li>
+                            <li>Set <strong>Name</strong> to <code>GitSyncSource</code>.</li>
+                            <li>
+                                Set <strong>Type</strong> to <em>String</em> (or <em>Multi-line string</em>
+                                if you want to list multiple URLs).
+                            </li>
+                            <li>Leave <strong>Required</strong> unchecked (not every repo needs syncing).</li>
+                            <li>Click <strong>Save</strong>.</li>
+                        </ol>
+                        <p>
+                            Once the property is created, set its value on each target repository via
+                            <strong>Repository → Settings → Custom properties → GitSyncSource</strong>.
+                            The value should be the Azure DevOps source repository URL (or a
+                            newline-separated list of URLs) that are allowed to trigger a sync.
+                        </p>
+                        <p class="mb-0">
+                            <strong>Alternative:</strong> Grant the GitHub App installation the
+                            <strong>Actions variables: read</strong> permission, then add a repository
+                            Actions variable named <code>DEVOPS_GITHUB_SYNC_SOURCES</code> to each
+                            target repository instead.
+                        </p>
+                    }
+                    else if (Model.ApprovalSetupStatus == SourceApprovalSetupStatus.UserAccountUnsupported)
+                    {
+                        <div class="alert alert-danger py-2 mb-2" role="alert">
+                            <strong>⚠ Custom properties are not available for personal (non-organisation) accounts.</strong>
+                        </div>
+                        <p>
+                            The app is installed on a personal account (<code>@Model.AccountLogin</code>).
+                            GitHub custom repository properties are only available for
+                            <strong>organisation-owned repositories</strong>.
+                        </p>
+                        <p class="mb-0">
+                            To use source-repository approval, grant the GitHub App installation the
+                            <strong>Actions variables: read</strong> permission, then add a repository
+                            Actions variable named <code>DEVOPS_GITHUB_SYNC_SOURCES</code> to each
+                            target repository (<strong>Settings → Secrets and variables → Actions →
+                            Variables</strong>).
+                        </p>
+                    }
+                    else
+                    {
+                        @* SourceApprovalSetupStatus.SchemaCheckFailed *@
+                        <div class="alert alert-warning py-2 mb-2" role="alert">
+                            <strong>⚠ Could not read the organisation's custom-property schema.</strong>
+                        </div>
+                        <p>
+                            The installation does not have <strong>Actions variables: read</strong>
+                            permission and the attempt to read the organisation's custom-property
+                            schema failed (the app may need additional permissions).
+                        </p>
+                        <p>Choose one of the following options:</p>
+                        <ul>
+                            <li>
+                                <strong>Option A – Grant the Actions variables permission:</strong>
+                                Update the GitHub App installation to include
+                                <strong>Repository permissions → Actions variables: Read</strong>,
+                                then add a <code>DEVOPS_GITHUB_SYNC_SOURCES</code> repository
+                                Actions variable to each target repository.
+                            </li>
+                            <li class="mt-2">
+                                <strong>Option B – Create the <code>GitSyncSource</code> custom property manually:</strong>
+                                Go to
+                                <a href="https://github.com/organizations/@Model.AccountLogin/settings/custom-properties"
+                                   target="_blank" rel="noopener noreferrer">
+                                    github.com/organizations/@Model.AccountLogin/settings/custom-properties
+                                </a>,
+                                create a property named <code>GitSyncSource</code> (type: String),
+                                then set its value on each target repository.
+                            </li>
+                        </ul>
+                    }
                 </li>
                 <li class="mb-2">
                     <strong>Add <code>Sync-DevOps-GitHub.yml</code></strong> to the

@@ -20,6 +20,9 @@ public class GitHubAppController(GitHubAppService gitHub) : Controller
     ///   GET /github/installed?installation_id=&lt;id&gt;&amp;setup_action=update
     ///
     /// Fetches installation details directly from the GitHub API using the App JWT.
+    /// When the installation does not have <c>Actions variables: read</c> permission
+    /// the method additionally checks whether the organisation has defined the
+    /// <c>GitSyncSource</c> custom property, and surfaces appropriate instructions.
     /// </summary>
     [HttpGet("github/installed")]
     public async Task<IActionResult> Installed(
@@ -43,7 +46,35 @@ public class GitHubAppController(GitHubAppService gitHub) : Controller
             AccountType = installation?.AccountType,
             RepositorySelection = installation?.RepositorySelection,
             SuspendedAt = installation?.SuspendedAt,
+            HasVariablesReadPermission = installation?.HasVariablesReadPermission ?? false,
         };
+
+        if (installation is not null)
+        {
+            if (installation.HasVariablesReadPermission)
+            {
+                vm.ApprovalSetupStatus = SourceApprovalSetupStatus.HasVariablesPermission;
+            }
+            else if (string.Equals(installation.AccountType, "Organization", StringComparison.OrdinalIgnoreCase))
+            {
+                // Metadata (repo contents) read is always included; use the installation
+                // access token to query the org's custom-property schema.
+                var accessToken = await gitHub.GetInstallationAccessTokenAsync(installationId, ct);
+                var schema = await gitHub.GetOrgPropertySchemaAsync(installation.AccountLogin, accessToken, ct);
+
+                vm.ApprovalSetupStatus = schema switch
+                {
+                    null => SourceApprovalSetupStatus.SchemaCheckFailed,
+                    var s when s.Contains("GitSyncSource") => SourceApprovalSetupStatus.OrgPropertyDefined,
+                    _ => SourceApprovalSetupStatus.OrgPropertyNotDefined,
+                };
+            }
+            else
+            {
+                // Personal (user-owned) accounts do not support custom properties.
+                vm.ApprovalSetupStatus = SourceApprovalSetupStatus.UserAccountUnsupported;
+            }
+        }
 
         return View(vm);
     }

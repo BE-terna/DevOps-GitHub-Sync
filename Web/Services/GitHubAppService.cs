@@ -81,8 +81,7 @@ public sealed class GitHubAppService(
         var result = await response.Content.ReadFromJsonAsync<InstallationApiResponse>(
             cancellationToken: ct);
 
-        return result is null ? null
-            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection, result.SuspendedAt);
+        return result is null ? null : MapInstallation(result);
     }
 
     /// <summary>
@@ -110,9 +109,13 @@ public sealed class GitHubAppService(
         var result = await response.Content.ReadFromJsonAsync<InstallationApiResponse>(
             cancellationToken: ct);
 
-        return result is null ? null
-            : new AppInstallation(result.Id, result.Account.Login, result.Account.Type, result.RepositorySelection, result.SuspendedAt);
+        return result is null ? null : MapInstallation(result);
     }
+
+    private static AppInstallation MapInstallation(InstallationApiResponse r) =>
+        new(r.Id, r.Account.Login, r.Account.Type, r.RepositorySelection, r.SuspendedAt,
+            HasVariablesReadPermission: string.Equals(
+                r.Permissions.Variables, "read", StringComparison.OrdinalIgnoreCase));
 
     // ── Installation access token ─────────────────────────────────────────────
 
@@ -207,6 +210,71 @@ public sealed class GitHubAppService(
         return result?.Value;
     }
 
+    // ── Repository custom properties ─────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the custom-property values set on a repository as a
+    /// case-insensitive dictionary keyed by property name.
+    /// Requires the <c>metadata: read</c> permission (always included).
+    /// Returns an empty dictionary when the call fails or no properties are set.
+    /// </summary>
+    public async Task<Dictionary<string, string?>> GetRepoCustomPropertiesAsync(
+        string owner,
+        string repo,
+        string accessToken,
+        CancellationToken ct = default)
+    {
+        var client = httpClientFactory.CreateClient("GitHub");
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+        var response = await client.GetAsync(
+            $"https://api.github.com/repos/{owner}/{repo}/properties/values", ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return [];
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<RepoCustomPropertyValue[]>(
+            cancellationToken: ct);
+
+        return result?.ToDictionary(
+            p => p.PropertyName,
+            p => p.Value,
+            StringComparer.OrdinalIgnoreCase) ?? [];
+    }
+
+    /// <summary>
+    /// Returns the set of custom-property names defined in the organisation's schema,
+    /// by calling <c>GET /orgs/{org}/properties/schema</c>.
+    /// Returns <c>null</c> when the call is not permitted or fails,
+    /// and an empty set when the organisation has no custom properties defined.
+    /// </summary>
+    public async Task<HashSet<string>?> GetOrgPropertySchemaAsync(
+        string org,
+        string accessToken,
+        CancellationToken ct = default)
+    {
+        var client = httpClientFactory.CreateClient("GitHub");
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+        var response = await client.GetAsync(
+            $"https://api.github.com/orgs/{org}/properties/schema", ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<OrgCustomPropertyDef[]>(
+            cancellationToken: ct);
+
+        return result?.Select(p => p.PropertyName)
+                      .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    }
+
     // ── Repository dispatch ───────────────────────────────────────────────────
 
     /// <summary>
@@ -246,7 +314,8 @@ public sealed class GitHubAppService(
         string AccountLogin,
         string AccountType,
         string RepositorySelection,
-        DateTimeOffset? SuspendedAt = null
+        DateTimeOffset? SuspendedAt = null,
+        bool HasVariablesReadPermission = false
         );
 
     // ── Private response DTOs ─────────────────────────────────────────────────
@@ -267,6 +336,9 @@ public sealed class GitHubAppService(
 
         [JsonPropertyName("suspended_at")]
         public DateTimeOffset? SuspendedAt { get; set; }
+
+        [JsonPropertyName("permissions")]
+        public InstallationPermissions Permissions { get; set; } = new();
     }
 
     private sealed class InstallationAccount
@@ -276,6 +348,16 @@ public sealed class GitHubAppService(
 
         [JsonPropertyName("type")]
         public string Type { get; set; } = string.Empty;
+    }
+
+    private sealed class InstallationPermissions
+    {
+        /// <summary>
+        /// Value is <c>"read"</c> when the Actions-variables permission is granted.
+        /// Maps to the GitHub App permission category "Repository permissions → Actions variables".
+        /// </summary>
+        [JsonPropertyName("variables")]
+        public string? Variables { get; set; }
     }
 
     private sealed class AccessTokenResponse
@@ -294,5 +376,20 @@ public sealed class GitHubAppService(
 
         [JsonPropertyName("value")]
         public string Value { get; set; } = string.Empty;
+    }
+
+    private sealed class RepoCustomPropertyValue
+    {
+        [JsonPropertyName("property_name")]
+        public string PropertyName { get; set; } = string.Empty;
+
+        [JsonPropertyName("value")]
+        public string? Value { get; set; }
+    }
+
+    private sealed class OrgCustomPropertyDef
+    {
+        [JsonPropertyName("property_name")]
+        public string PropertyName { get; set; } = string.Empty;
     }
 }

@@ -12,7 +12,7 @@ Azure DevOps pipeline
 DevOps-GitHub-Sync web app
         │
         │  Looks up GitHub App installation via GitHub API
-        │  Verifies sourceRepoUrl is in DEVOPS_GITHUB_SYNC_SOURCES variable
+        │  Verifies sourceRepoUrl is authorised (see Authorization below)
         │  Obtains short-lived installation access token (cached in-memory)
         │  Checks Sync-DevOps-GitHub.yml exists in target repo
         │
@@ -85,7 +85,16 @@ Called by an Azure DevOps pipeline to request a sync. Authorizes the request by 
 | `prBody` | | GitHub PR body / description |
 | `targetBranch` | | Base branch for the GitHub PR (defaults to `main`) |
 
-**Authorization:** The target GitHub repository must have a repository Actions variable named `DEVOPS_GITHUB_SYNC_SOURCES` containing a newline-separated list of allowed Azure DevOps source repository URLs. The request is accepted only when `sourceRepoUrl` matches one of those URLs.
+**Authorization:** The target GitHub repository must be explicitly approved. Two methods are supported:
+
+| Method | When | How |
+|--------|------|-----|
+| **Repository Actions variable** | App has `Actions variables: read` permission | Add a variable named `DEVOPS_GITHUB_SYNC_SOURCES` to the target repo (**Settings → Secrets and variables → Actions → Variables**) containing a newline-separated list of allowed ADO source URLs |
+| **Custom repository property** | App does **not** have `Actions variables: read` permission (org accounts only) | Create a `GitSyncSource` custom property in the organisation schema (**Org Settings → Custom properties**), then set its value on each target repo with the allowed ADO source URLs |
+
+The request is accepted only when `sourceRepoUrl` matches one of the URLs in the active method.
+
+> The post-installation page (`/github/installed`) automatically detects which method applies and displays the correct setup instructions.
 
 **Response codes:**
 
@@ -102,7 +111,8 @@ Called by an Azure DevOps pipeline to request a sync. Authorizes the request by 
 | Concern | Mechanism |
 |---------|-----------|
 | Webhook authenticity | HMAC-SHA256 signature (`X-Hub-Signature-256`) verified with `WebhookSecret`; timing-safe comparison |
-| Sync trigger auth | Source allow-list: the target repository must contain a `DEVOPS_GITHUB_SYNC_SOURCES` Actions variable listing permitted ADO source URLs; requests from unlisted sources are rejected with 403 |
+| Sync trigger auth – variables path | Source allow-list: the target repository must contain a `DEVOPS_GITHUB_SYNC_SOURCES` Actions variable listing permitted ADO source URLs; requests from unlisted sources are rejected with 403. Requires `Actions variables: read` permission. |
+| Sync trigger auth – custom property path | Source allow-list via `GitSyncSource` custom repository property (org accounts only). Used automatically when the installation does not have `Actions variables: read` permission. Requires only the always-included `metadata: read` permission. |
 | GitHub API auth | Short-lived GitHub App installation access tokens (RSA-signed JWT exchanged for token, cached in-memory, auto-refreshed) |
 | Deployment auth | OIDC workload identity federation – no stored Azure secrets in GitHub |
 

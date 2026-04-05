@@ -41,7 +41,7 @@ The application authenticates to GitHub using a **GitHub App**. You need to crea
    | **Webhook secret** | A strong random string – note it down as `WebhookSecret` |
    | **Repository permissions → Contents** | Read & write |
    | **Repository permissions → Pull requests** | Read & write |
-   | **Repository permissions → Actions variables** | Read |
+   | **Repository permissions → Actions variables** | Read *(optional – see step 4)* |
    | **Subscribe to events → Installation** | ✅ |
    | **Where can this GitHub App be installed?** | Any account (or only this account) |
 
@@ -69,7 +69,11 @@ Navigate to **GitHub App settings → Install App** and install it on the accoun
 
 After you click **Install**, GitHub redirects your browser to the **Setup URL** (`/github/installed`) where the installation details are confirmed.
 
-### 4 – Add the `DEVOPS_GITHUB_SYNC_SOURCES` variable to each target GitHub repository
+### 4 – Configure source-repository approval
+
+The sync service must verify that the Azure DevOps repository is allowed to trigger a sync to a given GitHub repository. Two methods are supported depending on the permissions granted to the GitHub App installation.
+
+#### Method A – Repository Actions variable (recommended when `Actions variables: read` is granted)
 
 For every GitHub repository that will receive synced pull requests, create a repository Actions variable:
 
@@ -84,6 +88,35 @@ https://dev.azure.com/myorg/project/_git/repo-b
 ```
 
 The sync service reads this variable via the GitHub API and only triggers the workflow when `sourceRepoUrl` in the request matches one of the listed URLs.
+
+#### Method B – Custom repository property (when `Actions variables: read` is **not** granted)
+
+If you prefer not to grant the `Actions variables: read` permission (or if the installation is on an organisation account and you want to manage approvals centrally), use a GitHub custom repository property instead.
+
+> **Note:** GitHub custom repository properties are only available for **organisation-owned** repositories. Personal-account installations must use Method A.
+
+##### Step 4b-1 – Create the `GitSyncSource` custom property in the organisation schema
+
+1. Go to your organisation settings:
+   `https://github.com/organizations/<your-org>/settings/custom-properties`
+2. Click **New property**.
+3. Set **Name** to `GitSyncSource`.
+4. Set **Type** to *String* (or *Multi-line string* if you want to list multiple URLs).
+5. Leave **Required** unchecked (not every repo needs syncing).
+6. Click **Save**.
+
+##### Step 4b-2 – Set the property value on each target repository
+
+1. Open the target repository on GitHub.
+2. Go to **Settings → Custom properties**.
+3. Find `GitSyncSource` and click **Edit**.
+4. Set the value to the Azure DevOps source repository URL (or a newline-separated list of URLs) that are allowed to trigger a sync to that repository.
+
+The sync service reads this property via `GET /repos/{owner}/{repo}/properties/values` (requires only the always-included `metadata: read` permission) and validates `sourceRepoUrl` against the listed URLs.
+
+> The post-installation page (`/github/installed`) automatically detects which method to use (based on the `permissions` field returned by the GitHub API) and displays the correct setup instructions.
+
+---
 
 ### 5 – Add `Sync-DevOps-GitHub.yml` to each target GitHub repository
 
@@ -323,7 +356,9 @@ variables:
 - [ ] OIDC federated credential configured for the GitHub Environment
 - [ ] GitHub Environment variables set (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_WEBAPP_NAME`)
 - [ ] First deployment triggered and succeeded
-- [ ] GitHub App installed on target repositories; Setup URL page (`/github/installed`) confirmed working
-- [ ] `DEVOPS_GITHUB_SYNC_SOURCES` repository variable added to each target GitHub repository with the allowed ADO source URLs
+- [ ] GitHub App installed on target repositories; Setup URL page (`/github/installed`) confirmed working and shows correct setup instructions
+- [ ] **Source-approval configured (choose one):**
+  - [ ] **Method A** – `Actions variables: read` permission granted **and** `DEVOPS_GITHUB_SYNC_SOURCES` repository variable added to each target GitHub repository with the allowed ADO source URLs
+  - [ ] **Method B** – `GitSyncSource` custom property created in the organisation schema **and** the property value set on each target repository with the allowed ADO source URLs *(organisation accounts only)*
 - [ ] `Sync-DevOps-GitHub.yml` workflow added to each target GitHub repository
 - [ ] Azure DevOps pipeline configured with `DEVOPS_GITHUB_SYNC_URL`, `DEVOPS_GITHUB_SYNC_TARGET_REPO`, and `DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER`

@@ -29,6 +29,16 @@ public class SyncController(
     private const string AllowedSourcesVariableName = "DEVOPS_GITHUB_SYNC_SOURCES";
 
     /// <summary>
+    /// Name of the GitHub custom repository property that holds the allowed
+    /// Azure DevOps source repository URLs.
+    /// Used as a fallback when the installation does not have
+    /// <c>Actions variables: read</c> permission.
+    /// Requires the organisation to have defined this property in its schema and
+    /// the <c>metadata: read</c> permission (always included).
+    /// </summary>
+    private const string GitSyncSourcePropertyName = "GitSyncSource";
+
+    /// <summary>
     /// Accepts a sync request from an Azure DevOps pipeline and triggers the
     /// <c>Sync-DevOps-GitHub</c> workflow via a <c>repository_dispatch</c> event.
     /// </summary>
@@ -90,43 +100,84 @@ public class SyncController(
         // ── Obtain an installation access token ───────────────────────────────
         var accessToken = await gitHub.GetInstallationAccessTokenAsync(installation.Id, ct);
 
-        // ── Read the allowed-sources variable from the target repo ────────────
-        // The variable value is a newline-separated list of ADO source repo URLs.
-        var variableValue = await gitHub.GetRepoVariableAsync(
-            owner, repo, AllowedSourcesVariableName, accessToken, ct);
-
-        if (variableValue is null)
+        // ── Validate source repository authorisation ──────────────────────────
+        // Preferred path: read the DEVOPS_GITHUB_SYNC_SOURCES Actions variable.
+        // Fallback path (when the installation lacks Variables: read permission):
+        //   read the GitSyncSource custom repository property.
+        if (installation.HasVariablesReadPermission)
         {
-            logger.LogWarning(
-                "Sync trigger rejected – variable '{Variable}' not found in {Repo}.",
-                AllowedSourcesVariableName,
-                Sanitize(request.TargetGitHubRepo));
+            var variableValue = await gitHub.GetRepoVariableAsync(
+                owner, repo, AllowedSourcesVariableName, accessToken, ct);
 
-            activity?.SetTag("sync.status", "Rejected");
-            activity?.SetStatus(ActivityStatusCode.Error, $"Variable '{AllowedSourcesVariableName}' not found");
+            if (variableValue is null)
+            {
+                logger.LogWarning(
+                    "Sync trigger rejected – variable '{Variable}' not found in {Repo}.",
+                    AllowedSourcesVariableName,
+                    Sanitize(request.TargetGitHubRepo));
 
-            return StatusCode(403,
-                $"Repository variable '{AllowedSourcesVariableName}' not found in {request.TargetGitHubRepo}. " +
-                "Add the variable with the allowed Azure DevOps source repository URLs (one per line).");
+                activity?.SetTag("sync.status", "Rejected");
+                activity?.SetStatus(ActivityStatusCode.Error, $"Variable '{AllowedSourcesVariableName}' not found");
+
+                return StatusCode(403,
+                    $"Repository variable '{AllowedSourcesVariableName}' not found in {request.TargetGitHubRepo}. " +
+                    "Add the variable with the allowed Azure DevOps source repository URLs (one per line).");
+            }
+
+            var result = CheckSourceAllowed(variableValue, request.SourceRepoUrl);
+            if (result is not null)
+            {
+                logger.LogWarning(
+                    "Sync trigger rejected – source repo is not in the allowed list for {Repo}.",
+                    Sanitize(request.TargetGitHubRepo));
+
+                activity?.SetTag("sync.status", "Rejected");
+                activity?.SetStatus(ActivityStatusCode.Error, "Source repository not in allowed list");
+
+                return StatusCode(403,
+                    $"Source repository is not listed in '{AllowedSourcesVariableName}' " +
+                    $"for {request.TargetGitHubRepo}.");
+            }
         }
-
-        var allowedSources = variableValue
-            .Split(['\n', ' ', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        if (!allowedSources.Contains(request.SourceRepoUrl))
+        else
         {
-            logger.LogWarning(
-                "Sync trigger rejected – source repo is not in the allowed list for {Repo}.",
-                Sanitize(request.TargetGitHubRepo));
+            // Fallback: custom repository property (metadata read is always included).
+            var properties = await gitHub.GetRepoCustomPropertiesAsync(owner, repo, accessToken, ct);
 
-            activity?.SetTag("sync.status", "Rejected");
-            activity?.SetStatus(ActivityStatusCode.Error, "Source repository not in allowed list");
+            if (!properties.TryGetValue(GitSyncSourcePropertyName, out var gitSyncSourceValue)
+                || gitSyncSourceValue is null)
+            {
+                logger.LogWarning(
+                    "Sync trigger rejected – custom property '{Property}' not set on {Repo}.",
+                    GitSyncSourcePropertyName,
+                    Sanitize(request.TargetGitHubRepo));
 
-            return StatusCode(403,
-                $"Source repository is not listed in '{AllowedSourcesVariableName}' " +
-                $"for {request.TargetGitHubRepo}.");
+                activity?.SetTag("sync.status", "Rejected");
+                activity?.SetStatus(ActivityStatusCode.Error, $"Custom property '{GitSyncSourcePropertyName}' not set");
+
+                return StatusCode(403,
+                    $"The installation does not have 'Actions variables: read' permission and the " +
+                    $"'{GitSyncSourcePropertyName}' custom property is not set on {request.TargetGitHubRepo}. " +
+                    "Either grant the 'Actions variables: read' permission to the GitHub App installation, " +
+                    $"or set the '{GitSyncSourcePropertyName}' custom property on the repository " +
+                    "with the allowed Azure DevOps source repository URLs (one per line).");
+            }
+
+            var result = CheckSourceAllowed(gitSyncSourceValue, request.SourceRepoUrl);
+            if (result is not null)
+            {
+                logger.LogWarning(
+                    "Sync trigger rejected – source repo is not in the '{Property}' custom property for {Repo}.",
+                    GitSyncSourcePropertyName,
+                    Sanitize(request.TargetGitHubRepo));
+
+                activity?.SetTag("sync.status", "Rejected");
+                activity?.SetStatus(ActivityStatusCode.Error, "Source repository not in allowed list");
+
+                return StatusCode(403,
+                    $"Source repository is not listed in the '{GitSyncSourcePropertyName}' custom property " +
+                    $"for {request.TargetGitHubRepo}.");
+            }
         }
 
         try
@@ -196,5 +247,20 @@ public class SyncController(
     {
         return value.Replace("\r", string.Empty, StringComparison.Ordinal)
              .Replace("\n", string.Empty, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Checks whether <paramref name="sourceRepoUrl"/> appears in <paramref name="allowList"/>.
+    /// The allow list is a newline-, space-, comma-, or semicolon-separated string.
+    /// Returns <c>null</c> when the source is allowed; a rejection reason when it is not.
+    /// </summary>
+    private static string? CheckSourceAllowed(string allowList, string sourceRepoUrl)
+    {
+        var allowed = allowList
+            .Split(['\n', ' ', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return allowed.Contains(sourceRepoUrl) ? null : "Source repository not in allowed list";
     }
 }
