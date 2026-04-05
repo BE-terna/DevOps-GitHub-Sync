@@ -1,0 +1,109 @@
+# ado-sync-pipeline.yml
+#
+# Sample Azure DevOps pipeline that calls the DevOps-GitHub-Sync service whenever
+# a pull request is created or updated, mirroring the PR branch to a target GitHub
+# repository.
+#
+# ── How to use ────────────────────────────────────────────────────────────────
+# 1. Copy this file (or the individual step) into your ADO repository.
+# 2. Set the required pipeline variables (see the "variables" section below) as
+#    pipeline variables, a variable group, or via the pipeline UI.
+# 3. Add the GitHub App to the target GitHub repository (if not already done).
+# 4. Add a DEVOPS_GITHUB_SYNC_SOURCES repository variable in the target GitHub
+#    repository containing this repository's HTTPS clone URL.
+# 5. Commit and push – the pipeline will trigger on the next pull request event.
+#
+# ── Authorization options ─────────────────────────────────────────────────────
+# The DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER variable must be set to a full HTTP
+# Authorization header value that the sync workflow will use to authenticate
+# against the ADO git remote. Two formats are supported:
+#
+#   Bearer <token>          Use the built-in System.AccessToken (recommended).
+#                           Grant the "Project Collection Build Service" identity
+#                           at least "Read" access on the source repository.
+#
+#   Basic <base64(:PAT)>    Use a Personal Access Token.
+#                           base64-encode  :<PAT>  (colon prefix, empty username).
+#                           Example (PowerShell):
+#                             [Convert]::ToBase64String(
+#                               [Text.Encoding]::ASCII.GetBytes(":$pat"))
+
+trigger: none   # This pipeline is intended to be triggered by PR events only.
+
+pr:
+  branches:
+    include:
+      - main
+      - 'feature/*'
+      - 'bugfix/*'
+      - 'hotfix/*'
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # ── Required – configure in pipeline variables or a linked variable group ────
+
+  # Base URL of the DevOps-GitHub-Sync service (no trailing slash).
+  DEVOPS_GITHUB_SYNC_URL: 'https://<your-service-hostname>'
+
+  # Target GitHub repository in "owner/repo" format.
+  DEVOPS_GITHUB_SYNC_TARGET_REPO: 'my-org/my-repo'
+
+  # Full HTTP Authorization header value for ADO authentication.
+  # Option 1 – Bearer with the built-in ADO System.AccessToken (recommended):
+  DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER: 'Bearer $(System.AccessToken)'
+  # Option 2 – Basic with a Personal Access Token (mark as secret in the UI):
+  # DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER: 'Basic <base64(:PAT)>'
+
+  # ── Optional overrides ────────────────────────────────────────────────────
+
+  # Base branch for the GitHub pull request (defaults to "main").
+  DEVOPS_GITHUB_SYNC_TARGET_BRANCH: 'main'
+
+steps:
+  - checkout: none
+
+  - pwsh: |
+      $sourceRepoUrl = '$(Build.Repository.Uri)'
+      $prId          = '$(System.PullRequest.PullRequestId)'
+      $commitId      = '$(System.PullRequest.SourceCommitId)'
+      $branchName    = '$(System.PullRequest.SourceBranch)' -replace '^refs/heads/', ''
+      $repoName      = '$(Build.Repository.Name)'
+
+      $body = @{
+          sourceRepoUrl          = $sourceRepoUrl
+          adoAuthorizationHeader = '$(DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER)'
+          pullRequestId          = $prId
+          commitId               = $commitId
+          targetGitHubRepo       = '$(DEVOPS_GITHUB_SYNC_TARGET_REPO)'
+          branchName             = $branchName
+          prTitle                = "Sync: $repoName PR $prId"
+          prBody                 = "Synced from Azure DevOps PR $prId`n`nSource: $sourceRepoUrl"
+          targetBranch           = '$(DEVOPS_GITHUB_SYNC_TARGET_BRANCH)'
+      } | ConvertTo-Json -Depth 2
+
+      Write-Host "Triggering sync for PR $prId (branch: $branchName) → $(DEVOPS_GITHUB_SYNC_TARGET_REPO)"
+
+      try {
+          $response = Invoke-RestMethod `
+              -Uri         '$(DEVOPS_GITHUB_SYNC_URL)/api/sync/trigger' `
+              -Method      Post `
+              -Body        $body `
+              -ContentType 'application/json' `
+              -ErrorAction Stop
+
+          Write-Host "Sync dispatched successfully. Trace ID: $($response.traceId)"
+      }
+      catch {
+          $statusCode = $_.Exception.Response.StatusCode.value__
+          $detail     = $_.ErrorDetails.Message
+          Write-Error "Sync trigger failed (HTTP $statusCode): $detail"
+          exit 1
+      }
+    displayName: 'Trigger DevOps-GitHub-Sync'
+    env:
+      # Re-expose the auth header as an environment variable so the script
+      # can read it without it appearing in the task definition in plain text
+      # when using a secret variable group.
+      DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER: $(DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER)

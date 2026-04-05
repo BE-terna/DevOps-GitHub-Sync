@@ -14,7 +14,7 @@ jobs:
       pull-requests: write
 
     env:
-      ADO_TOKEN:       ${{ github.event.client_payload.ado_token }}
+      ADO_AUTH_HEADER: ${{ github.event.client_payload.ado_auth_header }}
       SOURCE_REPO_URL: ${{ github.event.client_payload.source_repo_url }}
       PR_BRANCH:       ${{ github.event.client_payload.branch_name }}
       PR_TITLE:        ${{ github.event.client_payload.pr_title }}
@@ -38,13 +38,11 @@ jobs:
           git config --global user.name  "github-actions[bot]"
 
           # ── Add Azure DevOps as a remote ───────────────────────────────────────
-          # ADO uses Basic auth with a Base64-encoded PAT.
-          $adoTokenB64 = [Convert]::ToBase64String(
-              [Text.Encoding]::ASCII.GetBytes(":$env:ADO_TOKEN"))
-
+          # ADO_AUTH_HEADER is the full Authorization header value, e.g.
+          #   "Bearer <System.AccessToken>"  or  "Basic <base64(:PAT)>"
           git remote add devops $env:SOURCE_REPO_URL
           git config --local http.$env:SOURCE_REPO_URL.extraHeader `
-              "Authorization: Basic $adoTokenB64"
+              "Authorization: $env:ADO_AUTH_HEADER"
 
           # ── Fetch the PR branch from Azure DevOps ──────────────────────────────
           Write-Host "Fetching branch '$env:PR_BRANCH' from Azure DevOps..."

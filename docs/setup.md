@@ -18,7 +18,6 @@ This guide covers how to set up DevOps-GitHub-Sync for **local debugging** and f
 | Tool | Version | Notes |
 |------|---------|-------|
 | [.NET SDK](https://dotnet.microsoft.com/download/dotnet/10.0) | 10.x | Required for all scenarios |
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Any recent | Required for local SQL container (Aspire) |
 | [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | Any recent | Required for production setup |
 | [GitHub CLI (`gh`)](https://cli.github.com/) | Any recent | Optional – useful for testing |
 
@@ -42,6 +41,7 @@ The application authenticates to GitHub using a **GitHub App**. You need to crea
    | **Webhook secret** | A strong random string – note it down as `WebhookSecret` |
    | **Repository permissions → Contents** | Read & write |
    | **Repository permissions → Pull requests** | Read & write |
+   | **Repository permissions → Actions variables** | Read |
    | **Subscribe to events → Installation** | ✅ |
    | **Where can this GitHub App be installed?** | Any account (or only this account) |
 
@@ -67,11 +67,7 @@ awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' private-key.pem
 
 Navigate to **GitHub App settings → Install App** and install it on the account / repositories that should receive synced pull requests.
 
-After you click **Install**, GitHub sends an `installation` webhook POST to `/api/github/webhook` which records the installation in the database, and redirects your browser to the **Setup URL** (`/github/installed`) where a confirmation is displayed.
-
-> **Note:** There is an inherent race between the webhook POST and the browser redirect. If the
-> page loads before the webhook has been processed it will show a "processing" spinner and
-> auto-refresh every few seconds. This typically resolves within a second or two.
+After you click **Install**, GitHub redirects your browser to the **Setup URL** (`/github/installed`) where the installation details are confirmed.
 
 ### 4 – Add the `DEVOPS_GITHUB_SYNC_SOURCES` variable to each target GitHub repository
 
@@ -89,11 +85,15 @@ https://dev.azure.com/myorg/project/_git/repo-b
 
 The sync service reads this variable via the GitHub API and only triggers the workflow when `sourceRepoUrl` in the request matches one of the listed URLs.
 
+### 5 – Add `Sync-DevOps-GitHub.yml` to each target GitHub repository
+
+Copy `.github/workflows/Sync-DevOps-GitHub.yml` from this repository into the `.github/workflows/` folder of every GitHub repository that should receive synced pull requests. The workflow listens for `repository_dispatch` events of type `Sync-DevOps-GitHub` and handles the branch fetch, push, and PR creation automatically.
+
 ---
 
 ## Local development environment
 
-The project uses [.NET Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/get-started/aspire-overview) for local orchestration. Aspire starts a SQL Server container and wires the Web project to it automatically.
+The project uses [.NET Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/get-started/aspire-overview) for local orchestration.
 
 ### 1 – Install the Aspire workload
 
@@ -134,12 +134,7 @@ dotnet user-secrets set "GitHubApp:WebhookSecret" "your-webhook-secret" --projec
 dotnet run --project AppHost
 ```
 
-Aspire will:
-1. Pull and start a SQL Server container.
-2. Create the `DevOpsGitHubSync` database.
-3. Start the Web project and inject the connection string automatically.
-4. Apply EF Core migrations on startup.
-5. Open the Aspire Dashboard (URL printed in the console) where you can inspect logs, traces, and resource health.
+Aspire will start the Web project and open the Aspire Dashboard (URL printed in the console) where you can inspect logs, traces, and resource health.
 
 The Web application will be available at **`https://localhost:7014`** (or `http://localhost:5013`).
 
@@ -160,13 +155,7 @@ Update **both URL fields** in your GitHub App settings to the generated HTTPS UR
 
 ### 6 – Run without Aspire (advanced)
 
-If you prefer to run the Web project directly against an existing SQL Server instance, set the connection string manually:
-
 ```bash
-dotnet user-secrets set "ConnectionStrings:DevOpsGitHubSync" \
-  "Server=localhost,1433;Database=DevOpsGitHubSync;User Id=sa;Password=YourPassword;TrustServerCertificate=True" \
-  --project Web
-
 dotnet run --project Web
 ```
 
@@ -194,7 +183,6 @@ Provision the following resources before deploying the application.
 | Resource | Purpose |
 |----------|---------|
 | **Azure App Service** (Web App) | Hosts the ASP.NET Core application |
-| **Azure SQL Server + Database** | Stores installations and audit records |
 | **Azure Key Vault** (recommended) | Stores the GitHub App private key and webhook secret |
 | **Application Insights** (optional) | OpenTelemetry-based monitoring |
 
@@ -209,17 +197,12 @@ Configure the following settings on the Azure Web App (**Configuration → Appli
 | `GitHubApp:AppSlug` | URL slug of the GitHub App (e.g. `devops-github-sync`) | No |
 | `GitHubApp:PrivateKeyPem` | PEM key with `\n` literal newlines | **Yes** – use Key Vault reference |
 | `GitHubApp:WebhookSecret` | Webhook secret string | **Yes** – use Key Vault reference |
-| `ConnectionStrings:DevOpsGitHubSync` | Azure SQL connection string | **Yes** – use Key Vault reference |
 
 **Example Key Vault reference** (in App Service Application Settings):
 
 ```
 @Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/GitHubAppPrivateKey/)
 ```
-
-### Database
-
-EF Core migrations are applied automatically on application startup. No manual migration step is required. Ensure the App Service's managed identity (or the connection string user) has `db_owner` or at minimum `db_ddladmin` + `db_datawriter` + `db_datareader` permissions on the target database.
 
 ### CI/CD deployment with GitHub Actions
 
@@ -289,6 +272,47 @@ After deployment, configure **both URL fields** in your GitHub App settings:
 | **Setup URL** | `https://<your-web-app-hostname>/github/installed` |
 | **Webhook URL** | `https://<your-web-app-hostname>/api/github/webhook` |
 
+---
+
+## Azure DevOps pipeline configuration
+
+Use [`docs/ado-sync-pipeline.yml`](ado-sync-pipeline.yml) as a starting point. Copy it into your Azure DevOps repository and set the three required pipeline variables:
+
+| Variable | Example value | Notes |
+|----------|---------------|-------|
+| `DEVOPS_GITHUB_SYNC_URL` | `https://your-app.azurewebsites.net` | Base URL of the deployed service |
+| `DEVOPS_GITHUB_SYNC_TARGET_REPO` | `my-org/my-repo` | Target GitHub repository |
+| `DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER` | `Bearer $(System.AccessToken)` | See below |
+
+### Choosing an authentication method
+
+The `adoAuthorizationHeader` field in the request body is the full HTTP Authorization header value that the `Sync-DevOps-GitHub.yml` GitHub Actions workflow will use to authenticate against the Azure DevOps git remote when fetching the PR branch.
+
+**Option 1 – Bearer with `System.AccessToken` (recommended)**
+
+```yaml
+variables:
+  DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER: 'Bearer $(System.AccessToken)'
+```
+
+Grant the **Project Collection Build Service** (or the build service for your project) at least **Read** permission on the source repository in Azure DevOps (**Project settings → Repositories → Security**).
+
+**Option 2 – Basic with a Personal Access Token**
+
+Create a PAT with at least **Code (Read)** scope. Base64-encode `:<PAT>` (colon prefix, empty username):
+
+```powershell
+# PowerShell – run once to get the encoded value
+[Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(':<your-PAT>'))
+```
+
+Store the result as a **secret** pipeline variable (e.g. `ADO_PAT_B64`) and set:
+
+```yaml
+variables:
+  DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER: 'Basic $(ADO_PAT_B64)'
+```
+
 ### Production checklist
 
 - [ ] GitHub App created with correct permissions and events
@@ -296,9 +320,10 @@ After deployment, configure **both URL fields** in your GitHub App settings:
 - [ ] Webhook URL set to `https://<hostname>/api/github/webhook`
 - [ ] Private key and webhook secret stored in Key Vault
 - [ ] App Service Application Settings configured (incl. Key Vault references)
-- [ ] Azure SQL database provisioned; App Service identity has required DB permissions
 - [ ] OIDC federated credential configured for the GitHub Environment
 - [ ] GitHub Environment variables set (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_WEBAPP_NAME`)
 - [ ] First deployment triggered and succeeded
 - [ ] GitHub App installed on target repositories; Setup URL page (`/github/installed`) confirmed working
 - [ ] `DEVOPS_GITHUB_SYNC_SOURCES` repository variable added to each target GitHub repository with the allowed ADO source URLs
+- [ ] `Sync-DevOps-GitHub.yml` workflow added to each target GitHub repository
+- [ ] Azure DevOps pipeline configured with `DEVOPS_GITHUB_SYNC_URL`, `DEVOPS_GITHUB_SYNC_TARGET_REPO`, and `DEVOPS_GITHUB_SYNC_ADO_AUTH_HEADER`

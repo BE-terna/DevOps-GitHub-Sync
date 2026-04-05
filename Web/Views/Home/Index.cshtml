@@ -77,16 +77,80 @@
 Content-Type: application/json
 
 {
-  "sourceRepoUrl":     "https://dev.azure.com/org/project/_git/repo",
-  "systemAccessToken": "$(System.AccessToken)",
-  "pullRequestId":     "42",
-  "commitId":          "abc123",
-  "targetGitHubRepo":  "my-org/my-repo",
-  "branchName":        "feature/my-feature",
-  "prTitle":           "My feature",
-  "prBody":            "Synced from Azure DevOps PR #42",
-  "targetBranch":      "main"
+  "sourceRepoUrl":          "https://dev.azure.com/org/project/_git/repo",
+  "adoAuthorizationHeader": "Bearer $(System.AccessToken)",
+  "pullRequestId":          "42",
+  "commitId":               "abc123",
+  "targetGitHubRepo":       "my-org/my-repo",
+  "branchName":             "feature/my-feature",
+  "prTitle":                "My feature",
+  "prBody":                 "Synced from Azure DevOps PR #42",
+  "targetBranch":           "main"
 }</code></pre>
+
+    <h4 class="mt-4">Request fields</h4>
+    <table class="table table-sm table-bordered">
+        <thead class="table-light">
+            <tr>
+                <th>Field</th>
+                <th>Required</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>sourceRepoUrl</code></td>
+                <td>✅</td>
+                <td>HTTPS clone URL of the Azure DevOps repository</td>
+            </tr>
+            <tr>
+                <td><code>adoAuthorizationHeader</code></td>
+                <td>✅</td>
+                <td>
+                    Full HTTP Authorization header value the sync workflow uses to authenticate against ADO.
+                    Use <code>Bearer $(System.AccessToken)</code> for the built-in ADO pipeline token,
+                    or <code>Basic &lt;base64(:PAT)&gt;</code> for a Personal Access Token
+                    (base64-encode <code>:&lt;PAT&gt;</code> with a colon prefix and empty username).
+                </td>
+            </tr>
+            <tr>
+                <td><code>pullRequestId</code></td>
+                <td>✅</td>
+                <td>Azure DevOps pull-request identifier</td>
+            </tr>
+            <tr>
+                <td><code>commitId</code></td>
+                <td>✅</td>
+                <td>Source commit SHA</td>
+            </tr>
+            <tr>
+                <td><code>targetGitHubRepo</code></td>
+                <td>✅</td>
+                <td>Target GitHub repository in <code>owner/repo</code> format</td>
+            </tr>
+            <tr>
+                <td><code>branchName</code></td>
+                <td></td>
+                <td>Branch to create on GitHub (defaults to <code>pr/&lt;pullRequestId&gt;</code>)</td>
+            </tr>
+            <tr>
+                <td><code>prTitle</code></td>
+                <td></td>
+                <td>GitHub PR title (defaults to <code>Sync PR &lt;id&gt; from Azure DevOps</code>)</td>
+            </tr>
+            <tr>
+                <td><code>prBody</code></td>
+                <td></td>
+                <td>GitHub PR body / description</td>
+            </tr>
+            <tr>
+                <td><code>targetBranch</code></td>
+                <td></td>
+                <td>Base branch for the GitHub PR (defaults to <code>main</code>)</td>
+            </tr>
+        </tbody>
+    </table>
+
     <div class="alert alert-info mt-3">
         <strong>Authorization – no API key required.</strong>
         Instead, create a GitHub Actions repository variable named
@@ -99,5 +163,12 @@ Content-Type: application/json
         <strong>Example variable value:</strong>
         <pre class="mb-0 mt-1 bg-white p-2 rounded small">https://dev.azure.com/myorg/project/_git/repo-a
 https://dev.azure.com/myorg/project/_git/repo-b</pre>
+    </div>
+
+    <div class="alert alert-secondary mt-3">
+        <strong>&#128196; Ready-made pipeline file:</strong>
+        Copy <code>docs/ado-sync-pipeline.yml</code> from this repository into your Azure DevOps
+        pipeline definitions as a starting point. It includes the PowerShell step, variable
+        declarations and inline documentation for both Bearer and Basic authentication.
     </div>
 </div>

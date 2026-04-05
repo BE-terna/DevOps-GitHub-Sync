@@ -17,8 +17,7 @@ namespace DevOps.GitHub.Sync.Web.Services;
 public sealed class GitHubAppService(
     IOptions<GitHubAppOptions> options,
     IHttpClientFactory httpClientFactory,
-    IMemoryCache cache,
-    ILogger<GitHubAppService> logger)
+    IMemoryCache cache)
 {
     private readonly GitHubAppOptions _options = options.Value;
     private const string TokenCacheKeyPrefix = "GH_Token_";

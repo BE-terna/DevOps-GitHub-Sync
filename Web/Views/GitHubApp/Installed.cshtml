@@ -64,12 +64,88 @@
                     <code>.github/workflows/</code> folder of every GitHub repository you want to
                     sync to. The workflow file is included in this repository.
                 </li>
-                <li class="mb-2">
+                <li class="mb-3">
                     <strong>Configure your Azure DevOps pipeline</strong> to call
-                    <code>POST /api/sync/trigger</code> when a pull request is created or updated,
-                    passing the required PR metadata. See the
-                    <a asp-controller="Home" asp-action="Index">API documentation</a> for the
-                    full request schema.
+                    <code>POST /api/sync/trigger</code> when a pull request is created or updated.
+                    Copy <code>docs/ado-sync-pipeline.yml</code> from this repository or add the
+                    PowerShell step below to your existing pipeline.
+
+                    <div class="mt-3">
+                        <ul class="nav nav-tabs" id="authTab" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="bearer-tab" data-bs-toggle="tab"
+                                        data-bs-target="#bearer" type="button" role="tab"
+                                        aria-controls="bearer" aria-selected="true">
+                                    Bearer (System.AccessToken)
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="basic-tab" data-bs-toggle="tab"
+                                        data-bs-target="#basic" type="button" role="tab"
+                                        aria-controls="basic" aria-selected="false">
+                                    Basic (PAT)
+                                </button>
+                            </li>
+                        </ul>
+                        <div class="tab-content border border-top-0 p-3 bg-light rounded-bottom" id="authTabContent">
+                            <div class="tab-pane fade show active" id="bearer" role="tabpanel" aria-labelledby="bearer-tab">
+                                <pre class="mb-0 small"><code>- pwsh: |
+    $body = @@{
+        sourceRepoUrl          = '$(Build.Repository.Uri)'
+        adoAuthorizationHeader = 'Bearer $(System.AccessToken)'
+        pullRequestId          = '$(System.PullRequest.PullRequestId)'
+        commitId               = '$(System.PullRequest.SourceCommitId)'
+        targetGitHubRepo       = '@Model.AccountLogin/&lt;your-repo&gt;'
+        branchName             = '$(System.PullRequest.SourceBranch)' -replace '^refs/heads/', ''
+        prTitle                = 'Sync: $(Build.Repository.Name) PR $(System.PullRequest.PullRequestId)'
+        prBody                 = "Synced from Azure DevOps PR $(System.PullRequest.PullRequestId)"
+        targetBranch           = 'main'
+    } | ConvertTo-Json -Depth 2
+
+    $r = Invoke-RestMethod `
+        -Uri         'https://&lt;your-service-hostname&gt;/api/sync/trigger' `
+        -Method      Post `
+        -Body        $body `
+        -ContentType 'application/json'
+
+    Write-Host "Dispatched. Trace ID: $($r.traceId)"
+  displayName: 'Trigger DevOps-GitHub-Sync'</code></pre>
+                            </div>
+                            <div class="tab-pane fade" id="basic" role="tabpanel" aria-labelledby="basic-tab">
+                                <p class="small text-muted mb-2">
+                                    Store the PAT in a secret variable (e.g. <code>ADO_PAT</code>).
+                                    Base64-encode <code>:&lt;PAT&gt;</code> (colon prefix, empty username).
+                                </p>
+                                <pre class="mb-0 small"><code>variables:
+  ADO_AUTH_HEADER: "Basic $([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(':$(ADO_PAT)')))"
+
+steps:
+- pwsh: |
+    $body = @@{
+        sourceRepoUrl          = '$(Build.Repository.Uri)'
+        adoAuthorizationHeader = '$(ADO_AUTH_HEADER)'
+        pullRequestId          = '$(System.PullRequest.PullRequestId)'
+        commitId               = '$(System.PullRequest.SourceCommitId)'
+        targetGitHubRepo       = '@Model.AccountLogin/&lt;your-repo&gt;'
+        branchName             = '$(System.PullRequest.SourceBranch)' -replace '^refs/heads/', ''
+        prTitle                = 'Sync: $(Build.Repository.Name) PR $(System.PullRequest.PullRequestId)'
+        prBody                 = "Synced from Azure DevOps PR $(System.PullRequest.PullRequestId)"
+        targetBranch           = 'main'
+    } | ConvertTo-Json -Depth 2
+
+    $r = Invoke-RestMethod `
+        -Uri         'https://&lt;your-service-hostname&gt;/api/sync/trigger' `
+        -Method      Post `
+        -Body        $body `
+        -ContentType 'application/json'
+
+    Write-Host "Dispatched. Trace ID: $($r.traceId)"
+  displayName: 'Trigger DevOps-GitHub-Sync'
+  env:
+    ADO_AUTH_HEADER: $(ADO_AUTH_HEADER)</code></pre>
+                            </div>
+                        </div>
+                    </div>
                 </li>
             </ol>
         </div>

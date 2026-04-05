@@ -153,7 +153,7 @@ public class SyncController(
             var payload = new
             {
                 source_repo_url = request.SourceRepoUrl,
-                ado_token = request.SystemAccessToken,
+                ado_auth_header = request.AdoAuthorizationHeader,
                 pull_request_id = request.PullRequestId,
                 commit_id = request.CommitId,
                 branch_name = request.BranchName ?? $"pr/{request.PullRequestId}",

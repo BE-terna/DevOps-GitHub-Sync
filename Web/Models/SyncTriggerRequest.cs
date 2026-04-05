@@ -13,10 +13,18 @@ public sealed class SyncTriggerRequest
     [JsonPropertyName("sourceRepoUrl")]
     public string SourceRepoUrl { get; set; } = string.Empty;
 
-    /// <summary>Azure DevOps <c>$(System.AccessToken)</c> for authenticating against the ADO API.</summary>
+    /// <summary>
+    /// Full HTTP Authorization header value used by the sync workflow to authenticate against
+    /// the Azure DevOps REST API and git remote.
+    /// Accepted formats:
+    /// <list type="bullet">
+    ///   <item><description><c>Bearer $(System.AccessToken)</c> – built-in ADO pipeline token (recommended)</description></item>
+    ///   <item><description><c>Basic &lt;base64(:PAT)&gt;</c> – Personal Access Token; base64-encode <c>:&lt;PAT&gt;</c> (colon prefix, empty username)</description></item>
+    /// </list>
+    /// </summary>
     [Required]
-    [JsonPropertyName("systemAccessToken")]
-    public string SystemAccessToken { get; set; } = string.Empty;
+    [JsonPropertyName("adoAuthorizationHeader")]
+    public string AdoAuthorizationHeader { get; set; } = string.Empty;
 
     /// <summary>Azure DevOps pull-request identifier.</summary>
     [Required]
