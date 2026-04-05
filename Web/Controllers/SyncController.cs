@@ -111,8 +111,7 @@ public class SyncController(
         }
 
         var allowedSources = variableValue
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(line => line.TrimEnd('\r'))
+            .Split(['\n', ' ', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
